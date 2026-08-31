@@ -6,7 +6,7 @@ import logging
 from collections.abc import Generator
 from contextlib import contextmanager
 
-from sqlalchemy import create_engine, text
+from sqlalchemy import create_engine, event, text
 from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.orm import Session, declarative_base, sessionmaker
 
@@ -37,6 +37,24 @@ else:
     _engine_kwargs["connect_args"] = {"check_same_thread": False}
 
 engine = create_engine(settings.DATABASE_URL, **_engine_kwargs)
+
+if _is_sqlite:
+
+    @event.listens_for(engine, "connect")
+    def _sqlite_enable_foreign_keys(dbapi_connection, _connection_record) -> None:
+        """Enforce foreign keys on SQLite.
+
+        SQLite ignores ON DELETE CASCADE unless this pragma is set per
+        connection. Without it, relationships declared with
+        passive_deletes=True silently leave orphaned rows behind - a bug that
+        would show up only in the SQLite-backed tests, never in PostgreSQL.
+        """
+        cursor = dbapi_connection.cursor()
+        try:
+            cursor.execute("PRAGMA foreign_keys=ON")
+        finally:
+            cursor.close()
+
 
 SessionLocal = sessionmaker(
     bind=engine,
