@@ -1,3 +1,7 @@
 """Report routes: generate and download the PDF interview report."""
 
-# TODO: implementation pending.
+from fastapi import APIRouter
+
+router = APIRouter(prefix="/reports", tags=["reports"])
+
+# TODO: report generation and PDF download endpoints.

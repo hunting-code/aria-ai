@@ -6,12 +6,13 @@ AI-powered mock interview platform — full-stack scaffold.
 | --- | --- |
 | Frontend | React 19 + Vite 8 + Tailwind CSS 3 |
 | Backend | Python 3.13 + FastAPI |
-| Database | PostgreSQL 17 via SQLAlchemy 2 ORM |
+| Database | PostgreSQL 15 via SQLAlchemy 2 ORM |
 | Real-time | FastAPI WebSockets |
 | Package managers | npm (frontend), pip (backend) |
 
-> **Status:** structure only. Every module under `frontend/src` and `backend/app`
-> is an intentional placeholder — no application logic has been written yet.
+> **Status:** configuration layer is implemented and smoke-tested (settings,
+> database, CORS, health check, WebSocket, error handlers). Route handlers,
+> models, services and the whole frontend are still placeholders.
 
 ## Project structure
 
@@ -51,7 +52,7 @@ aria-ai/
 
 - Node.js 20+ and npm
 - Python 3.13
-- Docker (for the PostgreSQL container), or a local PostgreSQL 17 install
+- Docker (for the PostgreSQL container), or a local PostgreSQL 15 install
 
 ## Getting started
 
@@ -61,7 +62,8 @@ aria-ai/
 docker compose up -d db
 ```
 
-Postgres listens on `localhost:5432` with database `aria_db` (user `aria`).
+Postgres listens on `localhost:5432` with database `aria_ai` (user `postgres`,
+password `password`), matching the `DATABASE_URL` in `.env.example`.
 
 ### 2. Backend
 
@@ -74,7 +76,8 @@ cp .env.example .env            # then fill in SECRET_KEY and OPENAI_API_KEY
 uvicorn app.main:app --reload --port 8000
 ```
 
-API docs are served at http://localhost:8000/docs once `app/main.py` defines an `app`.
+Swagger UI: http://localhost:8000/docs · health check: http://localhost:8000/health
+(docs are disabled automatically when `ENVIRONMENT=production`).
 
 ### 3. Frontend
 
@@ -86,6 +89,18 @@ npm run dev
 
 Dev server runs at http://localhost:5173. Vite proxies `/api` and `/ws` to
 `http://localhost:8000`, so no CORS setup is needed in development.
+
+## API surface
+
+| Method | Path | Notes |
+| --- | --- | --- |
+| GET | `/health` | 200 when the database answers, 503 when it does not |
+| GET | `/docs` | Swagger UI (development only) |
+| WS | `/ws/{session_id}` | Live interview channel, JSON frames `{"type", "data"}` |
+| — | `/api/auth/*` | Router mounted; endpoints not implemented yet |
+| — | `/api/interview/*` | Router mounted; endpoints not implemented yet |
+| — | `/api/sessions/*` | Router mounted; endpoints not implemented yet |
+| — | `/api/reports/*` | Router mounted; endpoints not implemented yet |
 
 ## Frontend dependencies
 
