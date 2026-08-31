@@ -1,3 +1,214 @@
 @tailwind base;
 @tailwind components;
 @tailwind utilities;
+
+/* ========================================================================== */
+/* Base                                                                       */
+/* ========================================================================== */
+@layer base {
+  :root {
+    color-scheme: dark;
+    /* Consumed by .score-ring and the ring components. */
+    --ring-size: 120px;
+    --ring-stroke: 8px;
+  }
+
+  * {
+    @apply border-aria-border;
+  }
+
+  html {
+    -webkit-text-size-adjust: 100%;
+    scroll-behavior: smooth;
+  }
+
+  body {
+    @apply bg-aria-void font-sans text-aria-text antialiased;
+    /* A faint blue horizon keeps the void from reading as flat black. */
+    background-image: theme('backgroundImage.aria-radial');
+    background-attachment: fixed;
+    min-height: 100vh;
+    min-height: 100dvh;
+    text-rendering: optimizeLegibility;
+    -webkit-font-smoothing: antialiased;
+  }
+
+  h1,
+  h2,
+  h3,
+  h4,
+  h5,
+  h6 {
+    @apply font-display font-semibold tracking-tight text-aria-text;
+  }
+
+  /* Numerals line up in tables and score readouts. */
+  code,
+  kbd,
+  pre,
+  samp {
+    @apply font-mono;
+  }
+
+  /* One consistent focus treatment for every interactive element. Uses
+     :focus-visible so a mouse click doesn't leave a ring behind. */
+  :focus-visible {
+    @apply outline-none ring-2 ring-aria-pulse ring-offset-2 ring-offset-aria-void;
+  }
+
+  ::selection {
+    @apply bg-aria-blue text-white;
+  }
+
+  /* Scrollbars: Firefox first, then WebKit. */
+  * {
+    scrollbar-width: thin;
+    scrollbar-color: #2d7dd2 #1e2d40;
+  }
+
+  ::-webkit-scrollbar {
+    width: 8px;
+    height: 8px;
+  }
+
+  ::-webkit-scrollbar-track {
+    @apply bg-aria-border;
+    border-radius: 9999px;
+  }
+
+  ::-webkit-scrollbar-thumb {
+    @apply bg-aria-blue;
+    border-radius: 9999px;
+  }
+
+  ::-webkit-scrollbar-thumb:hover {
+    @apply bg-aria-pulse;
+  }
+
+  ::-webkit-scrollbar-corner {
+    @apply bg-transparent;
+  }
+
+  /* Respect the OS "reduce motion" setting: the waveform and glow loops are
+     exactly the kind of continuous animation that triggers vestibular
+     symptoms. Transitions collapse to near-instant rather than being removed,
+     so state changes are still perceivable. */
+  @media (prefers-reduced-motion: reduce) {
+    *,
+    *::before,
+    *::after {
+      animation-duration: 0.01ms !important;
+      animation-iteration-count: 1 !important;
+      transition-duration: 0.01ms !important;
+      scroll-behavior: auto !important;
+    }
+  }
+}
+
+/* ========================================================================== */
+/* Components                                                                 */
+/* ========================================================================== */
+@layer components {
+  /* Frosted panel. Falls back to an opaque surface where backdrop-filter is
+     unsupported, so text never lands on bare background. */
+  .glass {
+    @apply border border-aria-border bg-aria-surface/80;
+  }
+
+  @supports (backdrop-filter: blur(12px)) or (-webkit-backdrop-filter: blur(12px)) {
+    .glass {
+      @apply border border-aria-border bg-white/5 backdrop-blur-md;
+      -webkit-backdrop-filter: blur(12px);
+    }
+  }
+
+  .glow {
+    box-shadow: 0 0 20px rgba(0, 212, 255, 0.3);
+  }
+
+  .glow-border {
+    @apply border-aria-pulse/40;
+    box-shadow:
+      0 0 20px rgba(0, 212, 255, 0.18),
+      inset 0 0 20px rgba(0, 212, 255, 0.05);
+  }
+
+  /* Gradient wordmark / headline text. */
+  .text-gradient {
+    @apply bg-aria-gradient bg-clip-text text-transparent;
+  }
+
+  /* ---- Circular score ring -------------------------------------------- */
+  /* The SVG lives in ScoreRing.jsx; these rules own the geometry and the
+     sweep animation so the ring can also be used as plain markup. */
+  .score-ring {
+    position: relative;
+    display: inline-grid;
+    place-items: center;
+    width: var(--ring-size);
+    height: var(--ring-size);
+    flex-shrink: 0;
+  }
+
+  .score-ring svg {
+    width: 100%;
+    height: 100%;
+    /* Start the sweep at 12 o'clock instead of 3. */
+    transform: rotate(-90deg);
+    overflow: visible;
+  }
+
+  .score-ring__track {
+    stroke: theme('colors.aria-border');
+    fill: none;
+    stroke-width: var(--ring-stroke);
+  }
+
+  .score-ring__value {
+    fill: none;
+    stroke-width: var(--ring-stroke);
+    stroke-linecap: round;
+    /* --dash-offset is set inline from the score; the transition animates the
+       sweep from empty to its final value on mount. */
+    stroke-dasharray: var(--dash-array);
+    stroke-dashoffset: var(--dash-offset);
+    transition: stroke-dashoffset 1s cubic-bezier(0.16, 1, 0.3, 1);
+  }
+
+  .score-ring__label {
+    position: absolute;
+    inset: 0;
+    display: grid;
+    place-items: center;
+    text-align: center;
+    line-height: 1;
+  }
+}
+
+/* ========================================================================== */
+/* Utilities                                                                  */
+/* ========================================================================== */
+@layer utilities {
+  /* Hides content visually while leaving it for screen readers. */
+  .sr-only-focusable:not(:focus):not(:focus-within) {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    padding: 0;
+    margin: -1px;
+    overflow: hidden;
+    clip: rect(0, 0, 0, 0);
+    white-space: nowrap;
+    border-width: 0;
+  }
+
+  /* Momentum scrolling for horizontal card rails on touch devices. */
+  .scroll-touch {
+    -webkit-overflow-scrolling: touch;
+    scrollbar-width: none;
+  }
+
+  .scroll-touch::-webkit-scrollbar {
+    display: none;
+  }
+}

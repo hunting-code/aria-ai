@@ -1,0 +1,12 @@
+// Barrel export for the ARIA UI kit:
+//   import { Button, Card, ScoreRing } from '@/components/ui'
+export { default as Badge } from './Badge'
+export { default as Button } from './Button'
+export { default as Card, CardHeader } from './Card'
+export { default as Input } from './Input'
+export { default as LoadingSpinner } from './LoadingSpinner'
+export { default as ProgressBar } from './ProgressBar'
+export { default as ScoreRing } from './ScoreRing'
+export { default as WaveformVisualizer } from './WaveformVisualizer'
+export { default as cn } from './cn'
+export { SCORE_THRESHOLDS, TONE_HEX, scoreTone } from './scoreColor'
