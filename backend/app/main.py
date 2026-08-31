@@ -89,11 +89,31 @@ app.add_middleware(
 async def validation_exception_handler(
     request: Request, exc: RequestValidationError
 ) -> JSONResponse:
-    """Return a 422 with the field errors, without leaking internal state."""
-    logger.warning("Validation error on %s %s", request.method, request.url.path)
+    """Return a 422 with the field errors, without leaking internal state.
+
+    `exc.errors()` is deliberately not passed through as-is: entries raised by a
+    custom validator carry the original exception object under "ctx", which is
+    not JSON-serialisable (every such error would 500), and "input" echoes the
+    submitted value back - which for a password field means returning and
+    logging the password. Only loc/msg/type are exposed.
+    """
+    errors = [
+        {
+            "loc": [str(part) for part in err.get("loc", ())],
+            "msg": str(err.get("msg", "")),
+            "type": str(err.get("type", "")),
+        }
+        for err in exc.errors()
+    ]
+    logger.warning(
+        "Validation error on %s %s: %s",
+        request.method,
+        request.url.path,
+        [e["loc"] for e in errors],
+    )
     return JSONResponse(
         status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
-        content={"detail": "Validation error", "errors": exc.errors()},
+        content={"detail": "Validation error", "errors": errors},
     )
 
 

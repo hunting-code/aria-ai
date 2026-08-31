@@ -1,2 +1,163 @@
-// Axios instance and REST API calls to the ARIA-AI backend.
-// TODO: implementation pending.
+// Axios instance for the ARIA AI backend, plus the auth token plumbing.
+//
+// This module is the single source of truth for the stored token. It must not
+// import the auth store: the store imports this file, and the 401 handler is
+// registered by callback so the dependency only ever points one way.
+
+import axios from 'axios'
+
+export const API_BASE_URL = import.meta.env.VITE_API_URL ?? 'http://localhost:8000'
+export const API_PREFIX = '/api'
+const TOKEN_STORAGE_KEY = 'aria_token'
+const LOGIN_ROUTE = '/login'
+
+// Endpoints that are allowed to answer 401 without triggering a logout: a
+// failed sign-in must show "wrong password", not bounce the page.
+const AUTH_ENDPOINTS = [`${API_PREFIX}/auth/login`, `${API_PREFIX}/auth/register`]
+
+/* -------------------------------------------------------------------------- */
+/* Token storage                                                              */
+/* -------------------------------------------------------------------------- */
+// localStorage throws in private-mode Safari and when cookies are blocked, so
+// every access is guarded; the app then degrades to an in-memory token instead
+// of crashing on load.
+let memoryToken = null
+
+export function getToken() {
+  // Read through to localStorage every time rather than trusting a cache:
+  // otherwise a sign-out in another tab would go unnoticed here. memoryToken is
+  // only a fallback for when storage is unavailable.
+  try {
+    return window.localStorage.getItem(TOKEN_STORAGE_KEY)
+  } catch {
+    return memoryToken
+  }
+}
+
+export function setToken(token) {
+  memoryToken = token ?? null
+  try {
+    if (token) window.localStorage.setItem(TOKEN_STORAGE_KEY, token)
+    else window.localStorage.removeItem(TOKEN_STORAGE_KEY)
+  } catch {
+    /* storage unavailable - the in-memory copy carries this session */
+  }
+}
+
+export function clearToken() {
+  setToken(null)
+}
+
+/* -------------------------------------------------------------------------- */
+/* Instance                                                                   */
+/* -------------------------------------------------------------------------- */
+const api = axios.create({
+  baseURL: API_BASE_URL,
+  timeout: 30000,
+  headers: { 'Content-Type': 'application/json' },
+})
+
+// Attaches the bearer token to every outgoing request.
+api.interceptors.request.use(
+  (config) => {
+    const token = getToken()
+    if (token) {
+      config.headers = config.headers ?? {}
+      config.headers.Authorization = `Bearer ${token}`
+    }
+    return config
+  },
+  (error) => Promise.reject(error),
+)
+
+// Called on an expired/invalid token so the auth store can reset itself.
+let onUnauthorized = null
+export function setUnauthorizedHandler(handler) {
+  onUnauthorized = handler
+}
+
+function isAuthEndpoint(url = '') {
+  return AUTH_ENDPOINTS.some((path) => url.includes(path))
+}
+
+api.interceptors.response.use(
+  (response) => response,
+  (error) => {
+    const status = error.response?.status
+    const url = error.config?.url ?? ''
+
+    if (status === 401 && !isAuthEndpoint(url)) {
+      clearToken()
+      onUnauthorized?.()
+      // Guard against a redirect loop when the 401 arrives while already on
+      // the login page.
+      if (
+        typeof window !== 'undefined' &&
+        window.location.pathname !== LOGIN_ROUTE
+      ) {
+        window.location.assign(LOGIN_ROUTE)
+      }
+    }
+    return Promise.reject(error)
+  },
+)
+
+/* -------------------------------------------------------------------------- */
+/* Error helper                                                               */
+/* -------------------------------------------------------------------------- */
+/** Turn an axios failure into a single human-readable string. */
+export function extractErrorMessage(error, fallback = 'Something went wrong') {
+  if (error?.response) {
+    const { data, status } = error.response
+    if (Array.isArray(data?.errors) && data.errors.length > 0) {
+      // FastAPI validation errors: {loc, msg, type}
+      return data.errors
+        .map((e) => {
+          const field = Array.isArray(e.loc) ? e.loc[e.loc.length - 1] : null
+          return field ? `${field}: ${e.msg}` : e.msg
+        })
+        .join('\n')
+    }
+    if (typeof data?.detail === 'string') return data.detail
+    if (status === 401) return 'Incorrect username or password'
+    if (status >= 500) return 'The server is unavailable. Please try again.'
+    return `Request failed (${status})`
+  }
+  if (error?.code === 'ECONNABORTED') return 'The request timed out.'
+  if (error?.request) return 'Cannot reach the server. Is the backend running?'
+  return error?.message || fallback
+}
+
+/* -------------------------------------------------------------------------- */
+/* Auth endpoints                                                             */
+/* -------------------------------------------------------------------------- */
+export const authApi = {
+  /** POST /api/auth/register - JSON body. Returns {access_token, user, ...}. */
+  register: ({ username, email, password, full_name }) =>
+    api
+      .post(`${API_PREFIX}/auth/register`, {
+        username,
+        email,
+        password,
+        full_name: full_name || null,
+      })
+      .then((r) => r.data),
+
+  /**
+   * POST /api/auth/login - the backend uses OAuth2PasswordRequestForm, which
+   * requires form encoding; sending JSON here returns a 422.
+   */
+  login: ({ username, password }) =>
+    api
+      .post(
+        `${API_PREFIX}/auth/login`,
+        new URLSearchParams({ username, password }),
+        { headers: { 'Content-Type': 'application/x-www-form-urlencoded' } },
+      )
+      .then((r) => r.data),
+
+  /** GET /api/auth/me - the user behind the current token. */
+  me: () => api.get(`${API_PREFIX}/auth/me`).then((r) => r.data),
+}
+
+export default api

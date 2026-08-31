@@ -24,6 +24,7 @@ websockets==17.1
 # --- Config / validation ---
 pydantic==2.13.5
 pydantic-settings==2.15.0   # BaseSettings moved out of pydantic in v2
+email-validator==2.3.0      # required by pydantic's EmailStr
 python-dotenv==1.2.3
 
 # --- PDF report generation ---
