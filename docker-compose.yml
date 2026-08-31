@@ -1,0 +1,47 @@
+services:
+  db:
+    image: postgres:17-alpine
+    container_name: aria-postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-aria}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-aria_password}
+      POSTGRES_DB: ${POSTGRES_DB:-aria_db}
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-aria} -d ${POSTGRES_DB:-aria_db}"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+  # The application services below need Dockerfiles that do not exist yet
+  # (no application code has been written). Until then, run the backend and
+  # frontend locally and use this file only for PostgreSQL:
+  #
+  #   docker compose up -d db
+  #
+  # backend:
+  #   build: ./backend
+  #   container_name: aria-backend
+  #   env_file: ./backend/.env
+  #   environment:
+  #     DATABASE_URL: postgresql+psycopg2://aria:aria_password@db:5432/aria_db
+  #   ports:
+  #     - "8000:8000"
+  #   depends_on:
+  #     db:
+  #       condition: service_healthy
+  #
+  # frontend:
+  #   build: ./frontend
+  #   container_name: aria-frontend
+  #   ports:
+  #     - "5173:5173"
+  #   depends_on:
+  #     - backend
+
+volumes:
+  postgres_data:
