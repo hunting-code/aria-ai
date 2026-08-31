@@ -48,16 +48,13 @@ export default {
       },
 
       keyframes: {
-        // Halo that swells and fades - used on live/recording affordances.
+        // Halo that swells and fades - used on live/recording affordances and
+        // the primary CTA. Only the shadow's alpha animates: fading the
+        // element itself would dim the button label to 60% and make a live
+        // control read as disabled.
         'pulse-glow': {
-          '0%, 100%': {
-            boxShadow: '0 0 0 0 rgba(0, 212, 255, 0)',
-            opacity: '0.6',
-          },
-          '50%': {
-            boxShadow: '0 0 24px 4px rgba(0, 212, 255, 0.65)',
-            opacity: '1',
-          },
+          '0%, 100%': { boxShadow: '0 0 0 0 rgba(0, 212, 255, 0)' },
+          '50%': { boxShadow: '0 0 24px 4px rgba(0, 212, 255, 0.65)' },
         },
         // A single audio bar. Staggering comes from per-bar animation-delay.
         waveform: {

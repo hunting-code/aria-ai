@@ -160,4 +160,13 @@ export const authApi = {
   me: () => api.get(`${API_PREFIX}/auth/me`).then((r) => r.data),
 }
 
+/* -------------------------------------------------------------------------- */
+/* Interview sessions                                                         */
+/* -------------------------------------------------------------------------- */
+export const sessionsApi = {
+  /** GET /api/sessions/my-sessions - the caller's sessions, newest first. */
+  mySessions: (config = {}) =>
+    api.get(`${API_PREFIX}/sessions/my-sessions`, config).then((r) => r.data),
+}
+
 export default api
