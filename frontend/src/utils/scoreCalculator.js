@@ -85,3 +85,14 @@ export function scoreTone(value) {
   if (value >= SCORE_THRESHOLDS.fair) return 'amber'
   return 'red'
 }
+
+/**
+ * Tone key for a speaking pace.
+ * 110-150 wpm reads as comfortable; below 80 or above 180 is laboured or rushed.
+ */
+export function wpmTone(wpm) {
+  if (!wpm) return 'muted'
+  if (wpm < 80 || wpm > 180) return 'red'
+  if (wpm >= 110 && wpm <= 150) return 'green'
+  return 'amber'
+}

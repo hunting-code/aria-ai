@@ -1,11 +1,494 @@
-// Interview
-// TODO: implementation pending.
+// The live interview. Full-screen and deliberately sparse: the candidate is
+// being timed and recorded, so nothing competes with the question.
+//
+// Answer flow: record -> stopRecording() returns the final transcript and
+// metrics from /interview/transcribe -> the transcript goes over the WebSocket
+// as `answer_transcript` -> feedback streams back token by token and the
+// answer is persisted server-side.
+
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { useNavigate, useParams } from 'react-router-dom'
+import {
+  AlertCircle,
+  ArrowRight,
+  Keyboard,
+  Loader2,
+  Mic,
+  Square,
+  SkipForward,
+} from 'lucide-react'
+
+import useAudio from '../hooks/useAudio'
+import useWebSocket from '../hooks/useWebSocket'
+import { AriaLogo, Button, Card, LoadingSpinner, cn } from '../components/ui'
+import LiveWaveform from '../components/interview/LiveWaveform'
+import QuestionDisplay from '../components/interview/QuestionDisplay'
+import MetricsPanel from '../components/interview/MetricsPanel'
+import AnswerHistory from '../components/interview/AnswerHistory'
+import { detectFillers, highlightFillers } from '../utils/fillerDetector'
+import { calculateConfidence, calculateWpm } from '../utils/scoreCalculator'
+
+const MIN_TYPED_CHARS = 10
+
+function formatClock(seconds) {
+  const s = Math.max(0, Math.floor(seconds))
+  return `${String(Math.floor(s / 60)).padStart(2, '0')}:${String(s % 60).padStart(2, '0')}`
+}
 
 export default function Interview() {
+  const { sessionId } = useParams()
+  const navigate = useNavigate()
+
+  // ---- Interview state ------------------------------------------------- //
+  const [question, setQuestion] = useState('')
+  const [questionNum, setQuestionNum] = useState(0)
+  const [totalQuestions, setTotalQuestions] = useState(0)
+  const [feedback, setFeedback] = useState('')
+  const [isStreaming, setIsStreaming] = useState(false)
+  const [phase, setPhase] = useState('answering') // answering | submitted | complete
+  const [history, setHistory] = useState([])
+  const [serverError, setServerError] = useState(null)
+
+  // ---- Answer input ------------------------------------------------------ //
+  const [typedMode, setTypedMode] = useState(false)
+  const [typedAnswer, setTypedAnswer] = useState('')
+  const [elapsed, setElapsed] = useState(0)
+
+  const transcriptBoxRef = useRef(null)
+  const answerStartedAt = useRef(null)
+
+  const audio = useAudio()
+
+  // ---- WebSocket --------------------------------------------------------- //
+  const handleMessage = useCallback(
+    (msg) => {
+      switch (msg.type) {
+        case 'question':
+          setQuestion(msg.content)
+          setQuestionNum(msg.question_num)
+          setTotalQuestions(msg.total_questions)
+          setFeedback('')
+          setPhase('answering')
+          setElapsed(0)
+          answerStartedAt.current = null
+          break
+
+        case 'feedback_token':
+          setIsStreaming(true)
+          setFeedback((f) => f + msg.token)
+          break
+
+        case 'feedback_complete':
+          setIsStreaming(false)
+          setPhase('submitted')
+          setHistory((h) => [
+            ...h.filter((a) => a.questionNumber !== msg.question_num),
+            {
+              questionNumber: msg.question_num,
+              score: msg.scores?.answer_score ?? null,
+              confidence: msg.scores?.confidence_score ?? null,
+            },
+          ])
+          break
+
+        case 'interview_complete':
+          setPhase('complete')
+          navigate(`/analysis/${msg.session_id}`, { replace: true })
+          break
+
+        case 'error':
+          setServerError(msg.message)
+          setIsStreaming(false)
+          break
+
+        default:
+          break
+      }
+    },
+    [navigate],
+  )
+
+  const { send, isOpen, error: socketError, status } = useWebSocket(sessionId, {
+    onMessage: handleMessage,
+  })
+
+  // ---- Timer: ticks every second while an answer is in progress ---------- //
+  useEffect(() => {
+    if (phase !== 'answering') return undefined
+    if (!audio.isRecording && !typedMode) return undefined
+    if (answerStartedAt.current === null) answerStartedAt.current = Date.now()
+
+    const timer = setInterval(() => {
+      setElapsed((Date.now() - answerStartedAt.current) / 1000)
+    }, 1000)
+    return () => clearInterval(timer)
+  }, [phase, audio.isRecording, typedMode])
+
+  // Keep the live transcript pinned to the newest text.
+  useEffect(() => {
+    const box = transcriptBoxRef.current
+    if (box) box.scrollTop = box.scrollHeight
+  }, [audio.transcript, typedAnswer])
+
+  // ---- Derived live metrics ---------------------------------------------- //
+  const currentText = typedMode ? typedAnswer : audio.transcript
+  const wordCount = currentText.trim() ? currentText.trim().split(/\s+/).length : 0
+
+  // Recomputed each render, but the inputs only change on transcript updates
+  // and the once-a-second timer tick.
+  const liveFillers = useMemo(() => detectFillers(currentText, elapsed), [currentText, elapsed])
+  // Pace is a property of speech. A typed answer has no meaningful wpm - the
+  // raw figure would be typing speed (2000+ when pasted), which would corrupt
+  // both the confidence score and the session's average pace.
+  const liveWpm = useMemo(
+    () => (typedMode ? 0 : calculateWpm(currentText, elapsed)),
+    [typedMode, currentText, elapsed],
+  )
+  // Null until there are words: the formula returns 80 for an empty answer
+  // (no fillers, "unknown pace" penalty only), and showing 80% confidence
+  // before the candidate has spoken would be meaningless.
+  const liveConfidence = useMemo(
+    () => (wordCount ? calculateConfidence(liveFillers.count, liveWpm, wordCount) : null),
+    [liveFillers.count, liveWpm, wordCount],
+  )
+
+  const highlighted = useMemo(() => highlightFillers(currentText), [currentText])
+
+  const canSubmit =
+    phase === 'answering' &&
+    !audio.isRecording &&
+    !audio.isTranscribing &&
+    isOpen &&
+    (typedMode ? typedAnswer.trim().length >= MIN_TYPED_CHARS : Boolean(audio.transcript.trim()))
+
+  // ---- Actions ------------------------------------------------------------ //
+  const submitAnswer = useCallback(
+    (text, durationSeconds, fillerData, wpm) => {
+      const ok = send({
+        type: 'answer_transcript',
+        transcript: text,
+        filler_data: {
+          count: fillerData.count,
+          words: fillerData.words,
+          per_minute: fillerData.perMinute,
+        },
+        wpm,
+        duration_seconds: durationSeconds,
+      })
+      if (!ok) {
+        setServerError('Connection lost. Your answer was not submitted.')
+        return
+      }
+      setFeedback('')
+      setIsStreaming(true)
+    },
+    [send],
+  )
+
+  const handleMicClick = async () => {
+    setServerError(null)
+    if (audio.isRecording) {
+      const result = await audio.stopRecording()
+      const text = result?.transcript ?? audio.transcript
+      const duration = result?.durationSeconds ?? elapsed
+      if (text?.trim()) {
+        submitAnswer(text, duration, detectFillers(text, duration), calculateWpm(text, duration))
+      }
+      return
+    }
+    answerStartedAt.current = Date.now()
+    setElapsed(0)
+    await audio.startRecording()
+  }
+
+  const handleTypedSubmit = () => {
+    const text = typedAnswer.trim()
+    const duration = Math.max(elapsed, 1)
+    // wpm is deliberately null: see the note on liveWpm. The server treats a
+    // missing pace as unknown rather than as zero.
+    submitAnswer(text, duration, detectFillers(text, duration), null)
+  }
+
+  const handleNext = () => {
+    audio.reset()
+    setTypedAnswer('')
+    setElapsed(0)
+    send({ type: 'next_question' })
+  }
+
+  const handleSkip = () => {
+    if (!window.confirm('Skip this question? It will be scored as unanswered.')) return
+    audio.reset()
+    setTypedAnswer('')
+    send({ type: 'next_question' })
+  }
+
+  const handleEnd = () => {
+    if (!window.confirm('End the interview now? Your answers so far will be scored.')) return
+    send({ type: 'end_interview' })
+  }
+
+  const isLastQuestion = questionNum > 0 && questionNum >= totalQuestions
+  const error = serverError || socketError || audio.error
+
+  // ---- Connecting ---------------------------------------------------------- //
+  if (!question && status !== 'closed' && !socketError) {
+    return (
+      <div className="grid min-h-screen place-items-center bg-aria-void">
+        <div className="flex flex-col items-center gap-4">
+          <AriaLogo className="scale-125" />
+          <LoadingSpinner size="md" showLabel label="Connecting to your interview" />
+        </div>
+      </div>
+    )
+  }
+
+  if (socketError && !question) {
+    return (
+      <div className="grid min-h-screen place-items-center bg-aria-void px-6">
+        <Card padding="lg" className="max-w-md text-center">
+          <AlertCircle className="mx-auto h-8 w-8 text-aria-red" aria-hidden="true" />
+          <h1 className="mt-4 font-display text-xl font-semibold">
+            This interview could not be opened
+          </h1>
+          <p className="mt-2 text-sm text-aria-muted">{socketError}</p>
+          <Button className="mt-6" onClick={() => navigate('/')}>
+            Back to dashboard
+          </Button>
+        </Card>
+      </div>
+    )
+  }
+
   return (
-    <div className="mx-auto max-w-5xl">
-      <h1 className="font-display text-2xl font-semibold">Interview</h1>
-      <p className="mt-2 text-sm text-aria-muted">The live interview session runs here.</p>
+    <div className="min-h-screen bg-aria-void">
+      {/* ---- Top bar ------------------------------------------------------ */}
+      <header className="fixed inset-x-0 top-0 z-50 h-14 border-b border-aria-border bg-aria-base/85 backdrop-blur-md">
+        <div className="mx-auto flex h-14 max-w-[1600px] items-center justify-between gap-4 px-4 sm:px-6">
+          <AriaLogo className="shrink-0 scale-90" />
+
+          <div className="hidden min-w-0 flex-1 flex-col items-center gap-1 sm:flex">
+            <p className="font-mono text-xs text-aria-muted">
+              Question {questionNum || '-'} of {totalQuestions || '-'}
+            </p>
+            <div
+              className="h-1 w-full max-w-xs overflow-hidden rounded-full bg-aria-border"
+              role="progressbar"
+              aria-valuenow={questionNum}
+              aria-valuemin={0}
+              aria-valuemax={totalQuestions || 1}
+              aria-label={`Question ${questionNum} of ${totalQuestions}`}
+            >
+              <div
+                className="h-full rounded-full bg-aria-gradient transition-[width] duration-500 ease-out-expo"
+                style={{ width: `${totalQuestions ? (questionNum / totalQuestions) * 100 : 0}%` }}
+              />
+            </div>
+          </div>
+
+          <div className="flex shrink-0 items-center gap-3">
+            <span
+              className={cn(
+                'font-mono text-sm tabular-nums',
+                audio.isRecording ? 'text-aria-red' : 'text-aria-muted',
+              )}
+            >
+              {formatClock(elapsed)}
+            </span>
+            <Button size="sm" variant="danger" onClick={handleEnd}>
+              End Interview
+            </Button>
+          </div>
+        </div>
+      </header>
+
+      <main className="mx-auto max-w-[1600px] px-4 pb-28 pt-20 sm:px-6">
+        {error ? (
+          <div
+            role="alert"
+            className="mb-4 flex items-start gap-2.5 rounded-xl border border-aria-red/40 bg-aria-red/10 p-3 text-sm text-aria-red"
+          >
+            <AlertCircle className="mt-0.5 h-4 w-4 shrink-0" aria-hidden="true" />
+            <span>{error}</span>
+          </div>
+        ) : null}
+
+        <div className="grid gap-5 lg:grid-cols-[30%_40%_30%]">
+          {/* ---- Left: ARIA ------------------------------------------------ */}
+          <section aria-label="Interviewer" className="space-y-4">
+            <Card padding="md" glow>
+              <div className="mb-3 flex items-center gap-2">
+                <span className="font-display text-sm font-bold tracking-tight text-gradient">
+                  ARIA
+                </span>
+                <span
+                  aria-hidden="true"
+                  className="h-1.5 w-1.5 animate-pulse-glow rounded-full bg-aria-pulse"
+                />
+              </div>
+              <QuestionDisplay question={question} />
+            </Card>
+
+            <Card padding="md">
+              <p className="mb-2 text-xs font-medium uppercase tracking-wider text-aria-muted">
+                Feedback
+              </p>
+              {feedback ? (
+                <p
+                  className="whitespace-pre-wrap text-sm leading-relaxed text-aria-text"
+                  aria-live="polite"
+                >
+                  {feedback}
+                  {isStreaming ? (
+                    <span className="ml-0.5 inline-block h-4 w-0.5 animate-pulse bg-aria-pulse align-middle" />
+                  ) : null}
+                </p>
+              ) : isStreaming ? (
+                <LoadingSpinner size="sm" showLabel label="ARIA is thinking" />
+              ) : (
+                <p className="text-sm text-aria-muted">Waiting for your answer…</p>
+              )}
+            </Card>
+          </section>
+
+          {/* ---- Centre: the candidate ------------------------------------- */}
+          <section aria-label="Your answer" className="space-y-4">
+            <Card padding="md">
+              <div className="mb-2 flex items-center justify-between">
+                <p className="text-xs font-medium uppercase tracking-wider text-aria-muted">
+                  {typedMode ? 'Typed answer' : 'Your voice'}
+                </p>
+                <button
+                  type="button"
+                  onClick={() => setTypedMode((v) => !v)}
+                  disabled={audio.isRecording}
+                  className="inline-flex items-center gap-1.5 rounded-md px-2 py-1 text-xs text-aria-muted transition-colors hover:bg-white/5 hover:text-aria-text disabled:opacity-40"
+                >
+                  <Keyboard className="h-3.5 w-3.5" aria-hidden="true" />
+                  {typedMode ? 'Use microphone' : 'Type instead'}
+                </button>
+              </div>
+
+              {typedMode ? (
+                <textarea
+                  value={typedAnswer}
+                  onChange={(e) => setTypedAnswer(e.target.value)}
+                  placeholder="Type your answer…"
+                  rows={7}
+                  className="w-full resize-none rounded-lg border border-aria-border bg-aria-surface/70 p-3 text-sm text-aria-text placeholder:text-aria-muted/70 focus:border-aria-blue focus:outline-none focus:ring-2 focus:ring-aria-blue/40"
+                />
+              ) : (
+                <>
+                  <LiveWaveform isActive={audio.isRecording} getLevel={audio.getLevel} />
+
+                  <div className="mt-4 flex flex-col items-center">
+                    <button
+                      type="button"
+                      onClick={handleMicClick}
+                      disabled={phase !== 'answering' || audio.isTranscribing || !isOpen}
+                      aria-label={audio.isRecording ? 'Stop recording and submit' : 'Start recording'}
+                      className={cn(
+                        'grid h-20 w-20 place-items-center rounded-full border-2 transition-all duration-200',
+                        'focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-aria-pulse focus-visible:ring-offset-2 focus-visible:ring-offset-aria-void',
+                        'disabled:cursor-not-allowed disabled:opacity-40',
+                        audio.isRecording
+                          ? 'animate-pulse-glow border-aria-red bg-aria-red/20 text-aria-red'
+                          : 'border-aria-border bg-aria-surface text-aria-text hover:border-aria-blue hover:bg-aria-blue/10',
+                      )}
+                    >
+                      {audio.isTranscribing ? (
+                        <Loader2 className="h-7 w-7 animate-spin" aria-hidden="true" />
+                      ) : audio.isRecording ? (
+                        <Square className="h-6 w-6 fill-current" aria-hidden="true" />
+                      ) : (
+                        <Mic className="h-8 w-8" aria-hidden="true" />
+                      )}
+                    </button>
+                    <p className="mt-3 text-sm text-aria-muted" aria-live="polite">
+                      {audio.isTranscribing
+                        ? 'Processing…'
+                        : audio.isRecording
+                          ? 'Recording…'
+                          : 'Tap to answer'}
+                    </p>
+                  </div>
+                </>
+              )}
+            </Card>
+
+            <Card padding="md">
+              <p className="mb-2 text-xs font-medium uppercase tracking-wider text-aria-muted">
+                Live transcript
+              </p>
+              <div
+                ref={transcriptBoxRef}
+                className="max-h-40 overflow-y-auto text-sm leading-relaxed text-aria-text"
+              >
+                {currentText ? (
+                  // highlightFillers escapes everything it does not mark up, so
+                  // model-produced text cannot inject markup here.
+                  <p dangerouslySetInnerHTML={{ __html: highlighted }} />
+                ) : (
+                  <p className="text-aria-muted">
+                    {audio.isRecording ? 'Listening…' : 'Your words will appear here.'}
+                  </p>
+                )}
+              </div>
+            </Card>
+          </section>
+
+          {/* ---- Right: live metrics --------------------------------------- */}
+          <section aria-label="Live metrics" className="space-y-4">
+            <MetricsPanel
+              confidence={liveConfidence}
+              wpm={liveWpm}
+              fillerData={liveFillers}
+              isLive={audio.isRecording}
+            />
+            <Card padding="md">
+              <p className="mb-3 text-xs font-medium uppercase tracking-wider text-aria-muted">
+                Previous answers
+              </p>
+              <AnswerHistory answers={history} />
+            </Card>
+          </section>
+        </div>
+      </main>
+
+      {/* ---- Bottom bar ---------------------------------------------------- */}
+      <footer className="fixed inset-x-0 bottom-0 z-40 border-t border-aria-border bg-aria-base/85 backdrop-blur-md">
+        <div className="mx-auto flex max-w-[1600px] items-center justify-between gap-3 px-4 py-3 sm:px-6">
+          <Button
+            variant="ghost"
+            onClick={handleSkip}
+            disabled={phase !== 'answering' || audio.isRecording}
+            leftIcon={<SkipForward className="h-4 w-4" />}
+          >
+            Skip Question
+          </Button>
+
+          {phase === 'submitted' ? (
+            <Button
+              size="lg"
+              onClick={handleNext}
+              isLoading={isStreaming}
+              rightIcon={<ArrowRight className="h-4 w-4" />}
+            >
+              {isLastQuestion ? 'Finish Interview' : 'Next Question'}
+            </Button>
+          ) : (
+            <Button
+              size="lg"
+              onClick={typedMode ? handleTypedSubmit : handleMicClick}
+              disabled={!canSubmit && !audio.isRecording}
+              isLoading={audio.isTranscribing || isStreaming}
+              loadingLabel="Submitting your answer"
+            >
+              {audio.isRecording ? 'Stop & Submit' : 'Submit Answer'}
+            </Button>
+          )}
+        </div>
+      </footer>
     </div>
   )
 }

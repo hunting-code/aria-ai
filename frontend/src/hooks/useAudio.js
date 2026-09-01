@@ -61,6 +61,13 @@ export default function useAudio({ onPartial, onFinal } = {}) {
   const inFlightRef = useRef(false)
   const abortRef = useRef(null)
   const mimeRef = useRef(null)
+  // Live input level (0..1), read by the waveform through getLevel(). Kept in a
+  // ref rather than state: the meter repaints at 60fps and re-rendering the
+  // whole interview screen that often would be wasteful.
+  const levelRef = useRef(0)
+  const audioCtxRef = useRef(null)
+  const analyserRef = useRef(null)
+  const rafRef = useRef(null)
   // Guards against setting state after unmount mid-upload.
   const aliveRef = useRef(true)
 
@@ -75,6 +82,15 @@ export default function useAudio({ onPartial, onFinal } = {}) {
       clearInterval(tickRef.current)
       tickRef.current = null
     }
+    if (rafRef.current) {
+      cancelAnimationFrame(rafRef.current)
+      rafRef.current = null
+    }
+    analyserRef.current = null
+    // close() returns a promise; a failure here is not actionable.
+    audioCtxRef.current?.close?.().catch(() => {})
+    audioCtxRef.current = null
+    levelRef.current = 0
     streamRef.current?.getTracks().forEach((t) => t.stop())
     streamRef.current = null
     recorderRef.current = null
@@ -203,6 +219,42 @@ export default function useAudio({ onPartial, onFinal } = {}) {
       teardown()
     }
 
+    // Web Audio meter: RMS of the time-domain buffer, smoothed so the bars
+    // ease rather than strobe. Failure here must not stop the recording.
+    try {
+      const Ctx = window.AudioContext || window.webkitAudioContext
+      if (Ctx) {
+        const ctx = new Ctx()
+        const source = ctx.createMediaStreamSource(stream)
+        const analyser = ctx.createAnalyser()
+        analyser.fftSize = 1024
+        analyser.smoothingTimeConstant = 0.7
+        source.connect(analyser)
+        audioCtxRef.current = ctx
+        analyserRef.current = analyser
+
+        const buffer = new Uint8Array(analyser.fftSize)
+        const sample = () => {
+          const node = analyserRef.current
+          if (!node) return
+          node.getByteTimeDomainData(buffer)
+          let sum = 0
+          for (let i = 0; i < buffer.length; i += 1) {
+            const v = (buffer[i] - 128) / 128
+            sum += v * v
+          }
+          const rms = Math.sqrt(sum / buffer.length)
+          // Scale up: conversational speech sits well below full deflection.
+          const next = Math.min(1, rms * 3.2)
+          levelRef.current = levelRef.current * 0.6 + next * 0.4
+          rafRef.current = requestAnimationFrame(sample)
+        }
+        rafRef.current = requestAnimationFrame(sample)
+      }
+    } catch {
+      /* metering is decorative; recording continues without it */
+    }
+
     recorder.start(CHUNK_MS)
     setIsRecording(true)
 
@@ -259,6 +311,9 @@ export default function useAudio({ onPartial, onFinal } = {}) {
     setError(null)
   }, [teardown])
 
+  /** Current input level, 0..1. Read inside an animation frame. */
+  const getLevel = useCallback(() => levelRef.current, [])
+
   // Live filler feedback, recomputed locally as the transcript grows.
   const fillerData = detectFillers(liveTranscript || transcript, durationSeconds)
 
@@ -275,5 +330,6 @@ export default function useAudio({ onPartial, onFinal } = {}) {
     error,
     isSupported,
     reset,
+    getLevel,
   }
 }
