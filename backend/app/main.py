@@ -10,16 +10,17 @@ import logging
 from contextlib import asynccontextmanager
 from typing import Any
 
-from fastapi import FastAPI, Request, WebSocket, WebSocketDisconnect, status
+from fastapi import Depends, FastAPI, Request, WebSocket, status
 from fastapi.exceptions import RequestValidationError
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from sqlalchemy.exc import SQLAlchemyError
+from sqlalchemy.orm import Session
 
 from app.api import websocket as ws
 from app.api.routes import auth, interview, report, session
 from app.core.config import get_settings
-from app.core.database import check_connection, init_db
+from app.core.database import check_connection, get_db, init_db
 
 logging.basicConfig(
     level=logging.INFO,
@@ -177,47 +178,16 @@ async def root() -> dict[str, str]:
 # WebSocket
 # --------------------------------------------------------------------------- #
 @app.websocket("/ws/{session_id}")
-async def interview_websocket(websocket: WebSocket, session_id: str) -> None:
+async def interview_websocket_route(
+    websocket: WebSocket,
+    session_id: str,
+    db: Session = Depends(get_db),
+) -> None:
     """Live interview channel.
 
-    Accepts `{"type": ..., "data": {...}}` JSON frames and replies in kind.
-    A malformed frame is answered with an error message rather than a
-    disconnect; only an unexpected server fault closes the socket.
+    The protocol and state machine live in app.api.websocket. The dependency
+    yields a Session for the life of the connection, but SQLAlchemy returns the
+    underlying connection to the pool between transactions, so an idle
+    interview does not hold one open.
     """
-    if not session_id.strip():
-        await websocket.close(code=ws.WS_POLICY_VIOLATION, reason="Missing session_id")
-        return
-
-    # TODO: authenticate the socket (JWT in the query string or first frame)
-    # and verify the caller owns this session before accepting.
-    await ws.manager.connect(session_id, websocket)
-    try:
-        while True:
-            try:
-                message = await websocket.receive_json()
-            except ValueError:
-                await ws.manager.send_json(
-                    websocket,
-                    {"type": "error", "data": {"message": "Expected a JSON frame"}},
-                )
-                continue
-
-            if not isinstance(message, dict):
-                await ws.manager.send_json(
-                    websocket,
-                    {"type": "error", "data": {"message": "Frame must be a JSON object"}},
-                )
-                continue
-
-            reply = await ws.handle_message(session_id, message)
-            await ws.manager.send_json(websocket, reply)
-    except WebSocketDisconnect:
-        logger.info("Client disconnected (session=%s)", session_id)
-    except Exception:
-        logger.exception("WebSocket error (session=%s)", session_id)
-        try:
-            await websocket.close(code=ws.WS_INTERNAL_ERROR)
-        except RuntimeError:
-            pass  # already closed
-    finally:
-        ws.manager.disconnect(session_id, websocket)
+    await ws.interview_websocket(websocket, session_id, db)
