@@ -46,6 +46,8 @@ export function setToken(token) {
 
 export function clearToken() {
   setToken(null)
+  // Never leave one account's responses cached for whoever signs in next.
+  cacheClear()
 }
 
 /* -------------------------------------------------------------------------- */
@@ -161,26 +163,83 @@ export const authApi = {
 }
 
 /* -------------------------------------------------------------------------- */
+/* Response cache                                                             */
+/* -------------------------------------------------------------------------- */
+// A deliberately small in-memory cache for GETs that are read repeatedly while
+// navigating (stats, session lists). Five-minute TTL, cleared on any mutation
+// so a delete or a new session is never served from a stale entry.
+const CACHE_TTL_MS = 5 * 60 * 1000
+const cache = new Map()
+
+export function cacheGet(key) {
+  const entry = cache.get(key)
+  if (!entry) return undefined
+  if (Date.now() - entry.at > CACHE_TTL_MS) {
+    cache.delete(key)
+    return undefined
+  }
+  return entry.value
+}
+
+export function cacheSet(key, value) {
+  cache.set(key, { value, at: Date.now() })
+}
+
+/** Drop everything, or every key containing `prefix`. */
+export function cacheClear(prefix) {
+  if (!prefix) {
+    cache.clear()
+    return
+  }
+  for (const key of cache.keys()) {
+    if (key.includes(prefix)) cache.delete(key)
+  }
+}
+
+/** Run `loader`, returning a cached value when one is still fresh. */
+async function cached(key, loader, { force = false } = {}) {
+  if (!force) {
+    const hit = cacheGet(key)
+    if (hit !== undefined) return hit
+  }
+  const value = await loader()
+  cacheSet(key, value)
+  return value
+}
+
+/* -------------------------------------------------------------------------- */
 /* Interview sessions                                                         */
 /* -------------------------------------------------------------------------- */
 export const sessionsApi = {
   /** GET /api/sessions/my-sessions - the caller's sessions, newest first. */
-  mySessions: (config = {}) =>
-    api.get(`${API_PREFIX}/sessions/my-sessions`, config).then((r) => r.data),
+  mySessions: ({ force = false, ...config } = {}) =>
+    cached(
+      'sessions:list',
+      () => api.get(`${API_PREFIX}/sessions/my-sessions`, config).then((r) => r.data),
+      { force },
+    ),
 
   /** POST /api/sessions/create - opens a session and returns it. */
   create: ({ job_role, difficulty }) =>
-    api
-      .post(`${API_PREFIX}/sessions/create`, { job_role, difficulty })
-      .then((r) => r.data),
+    api.post(`${API_PREFIX}/sessions/create`, { job_role, difficulty }).then((r) => {
+      cacheClear('sessions:')
+      return r.data
+    }),
 
-  /** GET /api/sessions/stats - dashboard aggregates and trends. */
-  stats: (config = {}) =>
-    api.get(`${API_PREFIX}/sessions/stats`, config).then((r) => r.data),
+  /** GET /api/sessions/stats - dashboard aggregates and trends. Cached. */
+  stats: ({ force = false, ...config } = {}) =>
+    cached(
+      'sessions:stats',
+      () => api.get(`${API_PREFIX}/sessions/stats`, config).then((r) => r.data),
+      { force },
+    ),
 
   /** DELETE /api/sessions/:id - soft delete. Resolves with nothing (204). */
   remove: (sessionId) =>
-    api.delete(`${API_PREFIX}/sessions/${sessionId}`).then(() => true),
+    api.delete(`${API_PREFIX}/sessions/${sessionId}`).then(() => {
+      cacheClear('sessions:')
+      return true
+    }),
 
   /**
    * GET /api/sessions/my-sessions - one page of sessions.

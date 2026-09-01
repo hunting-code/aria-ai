@@ -22,6 +22,12 @@ from app.core.security import (
     verify_password,
 )
 from app.models import User
+from app.services.demo_service import (
+    DEMO_PASSWORD,
+    DEMO_USERNAME,
+    get_or_create_demo_user,
+    reset_demo_data,
+)
 
 logger = logging.getLogger(__name__)
 settings = get_settings()
@@ -125,6 +131,16 @@ def login(
     same error is returned whether the username or the password was wrong.
     """
     username = form_data.username.strip()
+
+    # The demo account is provisioned on first use and reset on every sign-in,
+    # so each visitor starts from the same five sample sessions and nothing
+    # they do in demo mode survives for the next one.
+    if username.lower() == DEMO_USERNAME and form_data.password == DEMO_PASSWORD:
+        demo = get_or_create_demo_user(db)
+        reset_demo_data(db, demo)
+        logger.info("Demo sign-in; account reset to its samples")
+        return _issue_token(demo)
+
     user = db.scalar(
         select(User).where(func.lower(User.username) == username.lower())
     )

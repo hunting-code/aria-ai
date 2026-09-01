@@ -14,6 +14,8 @@ from fastapi import Depends, FastAPI, Request, WebSocket, status
 from fastapi.exceptions import RequestValidationError
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
+from slowapi.errors import RateLimitExceeded
+from slowapi.middleware import SlowAPIMiddleware
 from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.orm import Session
 
@@ -21,6 +23,7 @@ from app.api import websocket as ws
 from app.api.routes import auth, interview, report, session
 from app.core.config import get_settings
 from app.core.database import check_connection, get_db, init_db
+from app.core.limiter import limiter
 
 logging.basicConfig(
     level=logging.INFO,
@@ -73,6 +76,24 @@ app = FastAPI(
     redoc_url=None if settings.is_production else "/redoc",
     openapi_url=None if settings.is_production else "/openapi.json",
 )
+
+# Rate limiting. The middleware applies the global per-IP/user default; routes
+# add their own stricter limits with @limiter.limit.
+app.state.limiter = limiter
+app.add_middleware(SlowAPIMiddleware)
+
+
+@app.exception_handler(RateLimitExceeded)
+async def rate_limit_handler(request: Request, exc: RateLimitExceeded) -> JSONResponse:
+    logger.warning("Rate limit hit on %s %s", request.method, request.url.path)
+    return JSONResponse(
+        status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+        content={
+            "detail": "Too many requests. Please slow down and try again shortly."
+        },
+        headers={"Retry-After": "60"},
+    )
+
 
 app.add_middleware(
     CORSMiddleware,

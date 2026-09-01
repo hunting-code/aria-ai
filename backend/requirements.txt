@@ -18,6 +18,9 @@ python-multipart==0.0.32   # required by FastAPI OAuth2 form login
 # --- LLM ---
 openai==3.6.0
 
+# --- Rate limiting ---
+slowapi==0.1.10
+
 # --- Real-time ---
 websockets==17.1
 

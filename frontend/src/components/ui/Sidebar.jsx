@@ -1,4 +1,4 @@
-import { useEffect } from 'react'
+import { useEffect, useRef } from 'react'
 import { NavLink } from 'react-router-dom'
 import {
   ChevronsLeft,
@@ -40,12 +40,49 @@ export default function Sidebar({
 }) {
   const user = useAuth((s) => s.user)
 
-  // Escape closes the mobile drawer.
+  const drawerRef = useRef(null)
+  const restoreFocusRef = useRef(null)
+
+  // Escape closes the drawer, and Tab is trapped inside it: an open dialog
+  // that lets focus wander behind the overlay is unusable with a keyboard.
   useEffect(() => {
     if (!mobileOpen) return undefined
-    const onKeyDown = (e) => e.key === 'Escape' && onCloseMobile?.()
+
+    restoreFocusRef.current = document.activeElement
+    const focusables = () =>
+      Array.from(
+        drawerRef.current?.querySelectorAll(
+          'a[href], button:not([disabled]), input, select, textarea, [tabindex]:not([tabindex="-1"])',
+        ) ?? [],
+      ).filter((el) => el.offsetParent !== null)
+
+    focusables()[0]?.focus()
+
+    const onKeyDown = (e) => {
+      if (e.key === 'Escape') {
+        onCloseMobile?.()
+        return
+      }
+      if (e.key !== 'Tab') return
+      const items = focusables()
+      if (!items.length) return
+      const first = items[0]
+      const last = items[items.length - 1]
+      if (e.shiftKey && document.activeElement === first) {
+        e.preventDefault()
+        last.focus()
+      } else if (!e.shiftKey && document.activeElement === last) {
+        e.preventDefault()
+        first.focus()
+      }
+    }
+
     document.addEventListener('keydown', onKeyDown)
-    return () => document.removeEventListener('keydown', onKeyDown)
+    return () => {
+      document.removeEventListener('keydown', onKeyDown)
+      // Return focus to whatever opened the drawer.
+      restoreFocusRef.current?.focus?.()
+    }
   }, [mobileOpen, onCloseMobile])
 
   const linkClass = ({ isActive }) =>
@@ -163,6 +200,7 @@ export default function Sidebar({
             aria-hidden="true"
           />
           <aside
+            ref={drawerRef}
             className="fixed left-0 top-0 z-50 h-full w-60 border-r border-aria-border bg-aria-base shadow-surface"
             role="dialog"
             aria-modal="true"

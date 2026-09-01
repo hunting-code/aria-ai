@@ -136,6 +136,9 @@ export default function Interview() {
   const { send, isOpen, error: socketError, status } = useWebSocket(sessionId, {
     onMessage: handleMessage,
   })
+  // The socket retries with backoff on its own; this only surfaces that it is
+  // happening, so a candidate mid-answer knows why nothing is responding.
+  const isReconnecting = !isOpen && !socketError && Boolean(question)
 
   // ---- Timer: ticks every second while an answer is in progress ---------- //
   useEffect(() => {
@@ -368,6 +371,17 @@ export default function Interview() {
           </div>
         ) : null}
 
+        {isReconnecting ? (
+          <div
+            role="status"
+            aria-live="polite"
+            className="mb-4 flex items-center gap-2.5 rounded-xl border border-aria-amber/40 bg-aria-amber/10 p-3 text-sm text-aria-amber"
+          >
+            <span className="h-2 w-2 animate-pulse rounded-full bg-aria-amber" aria-hidden="true" />
+            Reconnecting…
+          </div>
+        ) : null}
+
         <div className="grid gap-5 lg:grid-cols-[30%_40%_30%]">
           {/* ---- Left: ARIA ------------------------------------------------ */}
           <section aria-label="Interviewer" className="space-y-4">
@@ -458,7 +472,9 @@ export default function Interview() {
                       disabled={phase !== 'answering' || audio.isTranscribing || !isOpen}
                       aria-label={audio.isRecording ? 'Stop recording and submit' : 'Start recording'}
                       className={cn(
-                        'grid h-20 w-20 place-items-center rounded-full border-2 transition-all duration-200',
+                        // Full-width tap target on a phone, a circle from sm up.
+                        'grid h-16 w-full place-items-center rounded-2xl border-2 transition-all duration-200',
+                        'sm:h-20 sm:w-20 sm:rounded-full',
                         'focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-aria-pulse focus-visible:ring-offset-2 focus-visible:ring-offset-aria-void',
                         'disabled:cursor-not-allowed disabled:opacity-40',
                         audio.isRecording
@@ -508,19 +524,27 @@ export default function Interview() {
           </section>
 
           {/* ---- Right: live metrics --------------------------------------- */}
+          {/* Metrics collapse to a horizontal rail on small screens rather than
+              pushing the transcript off the bottom of the page. */}
           <section aria-label="Live metrics" className="space-y-4">
+            <div className="-mx-4 flex snap-x gap-4 overflow-x-auto px-4 pb-2 scroll-touch lg:mx-0 lg:block lg:overflow-visible lg:px-0 lg:pb-0">
+              <div className="min-w-[15rem] flex-1 snap-start lg:min-w-0">
             <MetricsPanel
               confidence={liveConfidence}
               wpm={liveWpm}
               fillerData={liveFillers}
               isLive={audio.isRecording}
             />
-            <Card padding="md">
-              <p className="mb-3 text-xs font-medium uppercase tracking-wider text-aria-muted">
-                Previous answers
-              </p>
-              <AnswerHistory answers={history} />
-            </Card>
+              </div>
+              <div className="min-w-[15rem] flex-1 snap-start lg:mt-4 lg:min-w-0">
+                <Card padding="md">
+                  <p className="mb-3 text-xs font-medium uppercase tracking-wider text-aria-muted">
+                    Previous answers
+                  </p>
+                  <AnswerHistory answers={history} />
+                </Card>
+              </div>
+            </div>
           </section>
         </div>
       </main>

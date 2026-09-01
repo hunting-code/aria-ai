@@ -18,7 +18,8 @@ import {
 } from 'lucide-react'
 
 import { sessionsApi, extractErrorMessage } from '../services/api'
-import { Badge, Button, Card, Input, LoadingSpinner, ProgressBar, cn } from '../components/ui'
+import { Badge, Button, Card, Input, ProgressBar, cn } from '../components/ui'
+import Skeleton from '../components/ui/Skeleton'
 import { scoreTone } from '../components/ui/scoreColor'
 import { gradeFor } from '../utils/scoreCalculator'
 import {
@@ -28,6 +29,9 @@ import {
   SessionsPerWeekChart,
 } from '../components/dashboard/ProgressCharts'
 import useToast from '../store/toastStore'
+import useDebounced from '../hooks/useDebounced'
+import EmptyState from '../components/ui/EmptyState'
+import { SessionCardSkeleton } from '../components/ui/Skeleton'
 
 const PAGE_SIZE = 12
 
@@ -204,6 +208,9 @@ export default function Sessions() {
   const [range, setRange] = useState('all')
   const [sort, setSort] = useState('newest')
   const [search, setSearch] = useState('')
+  // Filtering runs over every loaded session, so it waits for a pause in
+  // typing rather than recomputing on each keystroke.
+  const debouncedSearch = useDebounced(search, 250)
   const [selected, setSelected] = useState([])
   // "Now" is captured rather than read during render: calling Date.now() in a
   // memo makes the filter result depend on when React happens to re-render.
@@ -289,7 +296,7 @@ export default function Sessions() {
   // newest-first; filters narrow that page rather than re-querying.
   const visible = useMemo(() => {
     const cutoff = range === 'all' ? null : now - Number(range) * 86400000
-    const needle = search.trim().toLowerCase()
+    const needle = debouncedSearch.trim().toLowerCase()
 
     const filtered = sessions.filter((s) => {
       if (role !== 'all' && s.job_role !== role) return false
@@ -313,7 +320,7 @@ export default function Sessions() {
       if (sort === 'lowest') return score(a) - score(b)
       return new Date(b.created_at) - new Date(a.created_at)
     })
-  }, [sessions, role, range, sort, search, now])
+  }, [sessions, role, range, sort, debouncedSearch, now])
 
   const comparison = useMemo(() => {
     if (selected.length !== 2) return null
@@ -348,8 +355,18 @@ export default function Sessions() {
 
   if (isLoading) {
     return (
-      <div className="grid min-h-[50vh] place-items-center">
-        <LoadingSpinner size="md" showLabel label="Loading your history" />
+      <div className="mx-auto max-w-6xl">
+        <Skeleton className="h-8 w-72" />
+        <Skeleton className="mt-3 h-4 w-56" />
+        <div className="mt-8 grid gap-4 lg:grid-cols-3">
+          <Skeleton className="h-64 rounded-xl lg:col-span-2" />
+          <Skeleton className="h-64 rounded-xl" />
+        </div>
+        <div className="mt-4 grid gap-4 md:grid-cols-2">
+          {[0, 1, 2, 3].map((i) => (
+            <SessionCardSkeleton key={i} />
+          ))}
+        </div>
       </div>
     )
   }
@@ -506,15 +523,16 @@ export default function Sessions() {
           ))}
         </div>
       ) : (
-        <Card padding="lg" className="text-center">
-          <p className="font-medium text-aria-text">
-            {sessions.length ? 'No sessions match these filters' : 'No sessions yet'}
-          </p>
-          <p className="mx-auto mt-1 max-w-sm text-sm text-aria-muted">
-            {sessions.length
-              ? 'Try widening the date range or clearing the search.'
-              : 'Your completed interviews will be listed here.'}
-          </p>
+        <Card padding="lg">
+          <EmptyState
+            variant={sessions.length ? 'search' : 'documents'}
+            title={sessions.length ? 'No sessions match these filters' : 'No sessions yet'}
+            description={
+              sessions.length
+                ? 'Try widening the date range or clearing the search.'
+                : 'Your completed interviews will be listed here.'
+            }
+          />
         </Card>
       )}
 

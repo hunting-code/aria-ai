@@ -59,6 +59,11 @@ class Settings(BaseSettings):
     ENVIRONMENT: Literal["development", "staging", "production"] = "development"
     DEBUG: bool = False
 
+    # ---- Rate limiting ----
+    # Off for the test suite and for local runs where repeated requests are
+    # normal; on by default everywhere else.
+    DISABLE_RATE_LIMITS: bool = False
+
     # ---- CORS ----
     CORS_ORIGINS: str = "http://localhost:5173,http://127.0.0.1:5173"
 

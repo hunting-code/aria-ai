@@ -4,8 +4,19 @@ from __future__ import annotations
 
 import logging
 
-from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile, status
+from fastapi import (
+    APIRouter,
+    Depends,
+    File,
+    Form,
+    HTTPException,
+    Request,
+    Response,
+    UploadFile,
+    status,
+)
 
+from app.core.limiter import TRANSCRIBE_LIMIT, limiter
 from app.core.security import get_current_user
 from app.models import User
 from app.services.filler_service import filler_service
@@ -24,10 +35,14 @@ router = APIRouter(prefix="/interview", tags=["interview"])
     responses={
         401: {"description": "Missing, expired or invalid token"},
         413: {"description": "Recording too large"},
+        429: {"description": "Too many transcription requests"},
         503: {"description": "Speech-to-text unavailable"},
     },
 )
+@limiter.limit(TRANSCRIBE_LIMIT)
 async def transcribe(
+    request: Request,
+    response: Response,
     file: UploadFile = File(..., description="Recorded audio (webm/ogg/mp4/wav)."),
     duration_seconds: float | None = Form(default=None),
     current_user: User = Depends(get_current_user),

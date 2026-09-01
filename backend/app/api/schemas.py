@@ -92,6 +92,7 @@ class UserResponse(ORMModel):
     email: EmailStr
     full_name: str | None = None
     is_active: bool
+    is_demo: bool = False
     created_at: datetime
 
 

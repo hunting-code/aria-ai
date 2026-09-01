@@ -42,6 +42,11 @@ class User(Base):
     is_active: Mapped[bool] = mapped_column(
         Boolean, default=True, server_default=text("true"), nullable=False
     )
+    # The shared demo account. Its interviews are reset on each sign-in rather
+    # than accumulating, so every visitor starts from the same five samples.
+    is_demo: Mapped[bool] = mapped_column(
+        Boolean, default=False, server_default=text("false"), nullable=False
+    )
 
     sessions: Mapped[list["InterviewSession"]] = relationship(
         "InterviewSession",

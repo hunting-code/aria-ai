@@ -8,7 +8,9 @@ import { useCallback, useEffect, useRef, useState } from 'react'
 
 import { FATAL_CLOSE_CODES, WS_STATUS, interviewSocketUrl } from '../services/websocket'
 
-const MAX_RETRIES = 5
+// Three attempts with exponential backoff (0.8s, 1.6s, 3.2s) before giving up
+// and telling the candidate to reload.
+const MAX_RETRIES = 3
 const BASE_DELAY_MS = 800
 
 export default function useWebSocket(sessionId, { onMessage, enabled = true } = {}) {

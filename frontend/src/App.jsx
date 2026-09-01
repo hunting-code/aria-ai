@@ -1,6 +1,6 @@
 // Application shell: router, auth gating and the two page layouts.
 
-import { useEffect, useState } from 'react'
+import { Suspense, lazy, useEffect, useState } from 'react'
 import {
   BrowserRouter,
   Navigate,
@@ -16,16 +16,20 @@ import Sidebar from './components/ui/Sidebar'
 import Toaster from './components/ui/Toast'
 import { AriaLogo } from './components/ui/Navbar'
 import LoadingSpinner from './components/ui/LoadingSpinner'
+import OfflineBanner from './components/ui/OfflineBanner'
+import { PageSkeleton } from './components/ui/Skeleton'
 
-import Analysis from './pages/Analysis'
-import Sessions from './pages/Sessions'
-import Home from './pages/Home'
-import Interview from './pages/Interview'
-import Login from './pages/Login'
-import Register from './pages/Register'
-import Report from './pages/Report'
-import RoleSelect from './pages/RoleSelect'
-import Settings from './pages/Settings'
+// Pages are code-split: the interview screen pulls in recharts and the report
+// pulls in the PDF stack, and nobody should download either to reach /login.
+const Analysis = lazy(() => import('./pages/Analysis'))
+const Sessions = lazy(() => import('./pages/Sessions'))
+const Home = lazy(() => import('./pages/Home'))
+const Interview = lazy(() => import('./pages/Interview'))
+const Login = lazy(() => import('./pages/Login'))
+const Register = lazy(() => import('./pages/Register'))
+const Report = lazy(() => import('./pages/Report'))
+const RoleSelect = lazy(() => import('./pages/RoleSelect'))
+const Settings = lazy(() => import('./pages/Settings'))
 
 const SIDEBAR_KEY = 'aria_sidebar_collapsed'
 
@@ -149,8 +153,12 @@ export default function App() {
           Skip to content
         </a>
 
+        <OfflineBanner />
         <Toaster />
 
+        {/* Route-level split points need a fallback that matches the eventual
+            layout, so the page does not jump when the chunk lands. */}
+        <Suspense fallback={<div className="px-4 pt-24 sm:px-6"><PageSkeleton /></div>}>
         <Routes>
           {/* Public */}
           <Route element={<RedirectIfAuthenticated />}>
@@ -180,6 +188,7 @@ export default function App() {
               /login if the visitor is not signed in. */}
           <Route path="*" element={<Navigate to="/" replace />} />
         </Routes>
+        </Suspense>
       </AuthProvider>
     </BrowserRouter>
   )

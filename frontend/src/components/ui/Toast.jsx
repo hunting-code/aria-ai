@@ -1,5 +1,5 @@
 import { useEffect } from 'react'
-import { AlertCircle, CheckCircle2, Info, X } from 'lucide-react'
+import { AlertCircle, AlertTriangle, CheckCircle2, Info, X } from 'lucide-react'
 
 import useToast from '../../store/toastStore'
 import cn from './cn'
@@ -7,6 +7,7 @@ import cn from './cn'
 const TONES = {
   success: { icon: CheckCircle2, ring: 'border-aria-green/40', text: 'text-aria-green' },
   error: { icon: AlertCircle, ring: 'border-aria-red/40', text: 'text-aria-red' },
+  warning: { icon: AlertTriangle, ring: 'border-aria-amber/40', text: 'text-aria-amber' },
   info: { icon: Info, ring: 'border-aria-blue/40', text: 'text-aria-pulse' },
 }
 
@@ -53,7 +54,7 @@ export default function Toaster() {
 
   return (
     <div
-      className="pointer-events-none fixed inset-x-0 top-0 z-[100] flex flex-col items-center gap-2 p-4 sm:inset-x-auto sm:right-0 sm:top-16 sm:max-w-sm sm:items-end"
+      className="pointer-events-none fixed inset-x-0 top-0 z-[100] flex flex-col items-center gap-2 p-4 sm:inset-x-auto sm:right-0 sm:top-16 sm:w-full sm:max-w-sm sm:items-end"
       role="region"
       aria-label="Notifications"
     >

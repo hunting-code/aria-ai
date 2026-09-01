@@ -8,7 +8,7 @@ let nextId = 0
 const useToast = create((set, get) => ({
   toasts: [],
 
-  push: ({ title, description, tone = 'info', duration = 5000 }) => {
+  push: ({ title, description, tone = 'info', duration = 4000 }) => {
     const id = ++nextId
     set((s) => ({ toasts: [...s.toasts, { id, title, description, tone, duration }] }))
     return id
@@ -17,8 +17,10 @@ const useToast = create((set, get) => ({
   dismiss: (id) => set((s) => ({ toasts: s.toasts.filter((t) => t.id !== id) })),
 
   success: (title, description) => get().push({ title, description, tone: 'success' }),
+  // Errors linger a little longer: they usually carry an instruction.
   error: (title, description) =>
-    get().push({ title, description, tone: 'error', duration: 8000 }),
+    get().push({ title, description, tone: 'error', duration: 7000 }),
+  warning: (title, description) => get().push({ title, description, tone: 'warning' }),
   info: (title, description) => get().push({ title, description, tone: 'info' }),
 }))
 

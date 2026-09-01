@@ -6,7 +6,7 @@ import logging
 import uuid
 from datetime import datetime, timezone
 
-from fastapi import APIRouter, Depends, HTTPException, Path, Query, Response, status
+from fastapi import APIRouter, Depends, HTTPException, Path, Query, Request, Response, status
 from collections import Counter
 from datetime import timedelta
 
@@ -21,6 +21,7 @@ from app.api.schemas import (
     SessionSummary,
 )
 from app.core.database import get_db
+from app.core.limiter import CREATE_SESSION_LIMIT, limiter
 from app.core.security import get_current_user
 from app.models import Answer, InterviewSession, User
 from app.models.session import SessionStatus
@@ -136,7 +137,12 @@ def list_my_sessions(
     summary="Start a new interview session",
     responses={401: {"description": "Missing, expired or invalid token"}},
 )
+@limiter.limit(CREATE_SESSION_LIMIT)
 def create_session(
+    request: Request,
+    # slowapi injects its X-RateLimit-* headers into this when the endpoint
+    # returns something other than a Response - which an ORM object is.
+    response: Response,
     payload: SessionCreate,
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db),

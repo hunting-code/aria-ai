@@ -107,6 +107,15 @@ export default function Navbar({ onOpenSidebar, showMenuButton = false }) {
           >
             <AriaLogo />
           </Link>
+
+          {user?.is_demo ? (
+            <span
+              className="rounded-full border border-aria-amber/40 bg-aria-amber/10 px-2 py-0.5 text-[11px] font-medium text-aria-amber"
+              title="Sample data. Interviews you start here are cleared on the next demo sign-in."
+            >
+              Demo Mode
+            </span>
+          ) : null}
         </div>
 
         {/* Centre is intentionally empty. */}
