@@ -167,6 +167,12 @@ export const sessionsApi = {
   /** GET /api/sessions/my-sessions - the caller's sessions, newest first. */
   mySessions: (config = {}) =>
     api.get(`${API_PREFIX}/sessions/my-sessions`, config).then((r) => r.data),
+
+  /** POST /api/sessions/create - opens a session and returns it. */
+  create: ({ job_role, difficulty }) =>
+    api
+      .post(`${API_PREFIX}/sessions/create`, { job_role, difficulty })
+      .then((r) => r.data),
 }
 
 export default api

@@ -6,18 +6,20 @@ import logging
 
 from fastapi import APIRouter, Depends, Query, status
 from sqlalchemy import select
+from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.orm import Session
 
-from app.api.schemas import SessionSummary
+from app.api.schemas import SessionCreate, SessionResponse, SessionSummary
 from app.core.database import get_db
 from app.core.security import get_current_user
 from app.models import InterviewSession, User
+from app.models.session import SessionStatus
 
 logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/sessions", tags=["sessions"])
 
-# TODO: create / retrieve / end endpoints.
+# TODO: retrieve-one and end-session endpoints.
 
 
 @router.get(
@@ -46,3 +48,46 @@ def list_my_sessions(
         .offset(offset)
     ).all()
     return list(sessions)
+
+
+@router.post(
+    "/create",
+    response_model=SessionResponse,
+    status_code=status.HTTP_201_CREATED,
+    summary="Start a new interview session",
+    responses={401: {"description": "Missing, expired or invalid token"}},
+)
+def create_session(
+    payload: SessionCreate,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+) -> InterviewSession:
+    """Open a session for the signed-in user and return it.
+
+    The owner comes from the bearer token, never from the request body, so a
+    caller cannot create a session against someone else's account. The session
+    starts in `active`; scores stay null until it is graded.
+    """
+    session = InterviewSession(
+        user_id=current_user.id,
+        job_role=payload.job_role.value,
+        difficulty=payload.difficulty.value,
+        status=SessionStatus.ACTIVE.value,
+    )
+    db.add(session)
+    try:
+        db.commit()
+    except SQLAlchemyError:
+        db.rollback()
+        logger.exception("Could not create a session for user %s", current_user.id)
+        raise
+
+    db.refresh(session)
+    logger.info(
+        "Created session %s (%s / %s) for %s",
+        session.id,
+        session.job_role,
+        session.difficulty,
+        current_user.username,
+    )
+    return session
