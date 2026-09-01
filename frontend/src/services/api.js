@@ -217,4 +217,29 @@ export const interviewApi = {
   },
 }
 
+/* -------------------------------------------------------------------------- */
+/* Reports                                                                    */
+/* -------------------------------------------------------------------------- */
+export const reportApi = {
+  /**
+   * POST /api/report/:id/pdf - server-rendered PDF.
+   *
+   * responseType 'blob' is required: without it axios would decode the binary
+   * body as text and corrupt the file.
+   */
+  pdf: (sessionId, { signal } = {}) =>
+    api
+      .post(`${API_PREFIX}/report/${sessionId}/pdf`, null, {
+        responseType: 'blob',
+        signal,
+        timeout: 90000,
+      })
+      .then((r) => ({
+        blob: r.data,
+        filename:
+          /filename="([^"]+)"/.exec(r.headers['content-disposition'] ?? '')?.[1] ??
+          'ARIA_Report.pdf',
+      })),
+}
+
 export default api

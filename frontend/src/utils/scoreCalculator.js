@@ -96,3 +96,26 @@ export function wpmTone(wpm) {
   if (wpm >= 110 && wpm <= 150) return 'green'
   return 'amber'
 }
+
+// Letter grades. Boundaries mirror backend/app/services/report_service.py -
+// change both together, or the on-screen report and the PDF will disagree.
+export const GRADE_BANDS = [
+  [90, 'A+'],
+  [85, 'A'],
+  [80, 'A-'],
+  [76, 'B+'],
+  [70, 'B'],
+  [66, 'B-'],
+  [62, 'C+'],
+  [56, 'C'],
+  [50, 'C-'],
+  [40, 'D'],
+  [0, 'F'],
+]
+
+/** Letter grade for a 0-100 score. Returns '-' when unscored. */
+export function gradeFor(score) {
+  if (score === null || score === undefined || Number.isNaN(score)) return '-'
+  const band = GRADE_BANDS.find(([threshold]) => score >= threshold)
+  return band ? band[1] : 'F'
+}

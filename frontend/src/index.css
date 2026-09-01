@@ -138,6 +138,24 @@
     @apply bg-aria-gradient bg-clip-text text-transparent;
   }
 
+  /* The report renders on a white sheet for print and PDF. The base heading
+     rule sets text-aria-text (near-white), which is invisible there, so
+     everything inside the sheet is re-inked explicitly. */
+  .report-sheet,
+  .report-sheet h1,
+  .report-sheet h2,
+  .report-sheet h3,
+  .report-sheet p,
+  .report-sheet li,
+  .report-sheet td,
+  .report-sheet th {
+    color: #1a202c;
+  }
+
+  .report-sheet * {
+    border-color: #dee4ee;
+  }
+
   /* ---- Circular score ring -------------------------------------------- */
   /* The SVG lives in ScoreRing.jsx; these rules own the geometry and the
      sweep animation so the ring can also be used as plain markup. */
@@ -225,5 +243,47 @@
 
   .scroll-touch::-webkit-scrollbar {
     display: none;
+  }
+}
+
+/* ========================================================================== */
+/* Print                                                                      */
+/* ========================================================================== */
+@media print {
+  /* The report sheet is the page. Everything else - navbar, sidebar, toolbar,
+     toasts - is screen furniture and is dropped. */
+  @page {
+    size: A4;
+    margin: 14mm;
+  }
+
+  html,
+  body {
+    background: #ffffff !important;
+    background-image: none !important;
+    color: #1a202c !important;
+  }
+
+  header[class*="fixed"],
+  aside,
+  footer[class*="fixed"],
+  [role="region"][aria-label="Notifications"],
+  .print\:hidden {
+    display: none !important;
+  }
+
+  main {
+    padding: 0 !important;
+  }
+
+  /* Keep a question and its feedback together rather than split across pages. */
+  li,
+  section,
+  tr {
+    break-inside: avoid;
+  }
+
+  a[href]::after {
+    content: none !important;
   }
 }
