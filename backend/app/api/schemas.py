@@ -152,6 +152,7 @@ class SessionResponse(SessionSummary):
     filler_word_score: float | None = None
     total_filler_count: int = 0
     avg_wpm: float | None = None
+    final_feedback: dict | None = None
     answers: list["AnswerResponse"] = Field(default_factory=list)
 
 
@@ -184,6 +185,17 @@ class AnswerResponse(ORMModel):
     duration_seconds: float | None = None
     ai_feedback: str | None = None
     created_at: datetime
+
+
+class FinalFeedback(BaseModel):
+    """The whole-session verdict stored on a completed interview."""
+
+    strengths: list[str] = Field(default_factory=list)
+    weaknesses: list[str] = Field(default_factory=list)
+    top_suggestions: list[str] = Field(default_factory=list)
+    overall_verdict: str = ""
+    recommended_resources: list[str] = Field(default_factory=list)
+    source: str = "model"
 
 
 class FeedbackResponse(BaseModel):
@@ -219,6 +231,7 @@ __all__ = [
     "AnswerCreate",
     "AnswerResponse",
     "FeedbackResponse",
+    "FinalFeedback",
     "MessageResponse",
     "SessionCreate",
     "SessionResponse",

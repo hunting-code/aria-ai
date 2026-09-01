@@ -8,6 +8,7 @@ from enum import Enum
 from typing import TYPE_CHECKING
 
 from sqlalchemy import (
+    JSON,
     CheckConstraint,
     DateTime,
     Float,
@@ -18,6 +19,7 @@ from sqlalchemy import (
     Uuid,
     func,
 )
+from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.core.database import Base
@@ -25,6 +27,9 @@ from app.core.database import Base
 if TYPE_CHECKING:  # avoids a circular import at runtime
     from app.models.answer import Answer
     from app.models.user import User
+
+# JSONB on PostgreSQL, plain JSON elsewhere so the SQLite tests keep working.
+JSONDict = JSON().with_variant(JSONB(), "postgresql")
 
 
 class JobRole(str, Enum):
@@ -92,6 +97,12 @@ class InterviewSession(Base):
     )
     avg_wpm: Mapped[float | None] = mapped_column(Float, nullable=True)
     duration_minutes: Mapped[float | None] = mapped_column(Float, nullable=True)
+
+    # ---- Final report ----
+    # Whole-session verdict from score_service.generate_final_feedback:
+    # strengths, weaknesses, top_suggestions, overall_verdict and
+    # recommended_resources. Null until the session is completed.
+    final_feedback: Mapped[dict | None] = mapped_column(JSONDict, nullable=True)
 
     # ---- Lifecycle ----
     created_at: Mapped[datetime] = mapped_column(

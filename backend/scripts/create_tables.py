@@ -60,8 +60,21 @@ def check() -> int:
     missing = sorted(expected - existing)
     extra = sorted(existing - expected - {"alembic_version"})
 
+    inspector = inspect(engine)
+    drifted: list[str] = []
     for name in sorted(expected & existing):
-        logger.info("present  %s", name)
+        # create_all only ever ADDS tables - it will not add a column to a table
+        # that already exists, so a model change silently leaves the database
+        # behind. Report that here rather than letting it surface as a query
+        # error in production.
+        model_columns = set(Base.metadata.tables[name].columns.keys())
+        live_columns = {c["name"] for c in inspector.get_columns(name)}
+        absent = sorted(model_columns - live_columns)
+        if absent:
+            drifted.append(f"{name}: {', '.join(absent)}")
+            logger.warning("DRIFT    %s is missing column(s): %s", name, ", ".join(absent))
+        else:
+            logger.info("present  %s", name)
     for name in missing:
         logger.warning("MISSING  %s", name)
     for name in extra:
@@ -70,6 +83,14 @@ def check() -> int:
     if missing:
         logger.error(
             "%d table(s) missing. Run: python -m scripts.create_tables", len(missing)
+        )
+        return 1
+    if drifted:
+        logger.error(
+            "%d table(s) are missing columns. create_all cannot add them - apply "
+            "ALTER TABLE by hand or adopt Alembic:\n  %s",
+            len(drifted),
+            "\n  ".join(drifted),
         )
         return 1
     logger.info("Schema is up to date (%d tables).", len(expected))

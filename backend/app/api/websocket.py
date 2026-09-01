@@ -29,6 +29,7 @@ from app.core.security import decode_token
 from app.models import Answer, InterviewSession, User
 from app.models.session import SessionStatus
 from app.services.llm_service import LLMUnavailableError, get_questions, llm_service
+from app.services.score_service import score_service
 
 logger = logging.getLogger(__name__)
 
@@ -46,14 +47,6 @@ WS_POLICY_VIOLATION = 1008
 
 # Target speaking band, used for the confidence proxy.
 TARGET_WPM = 140.0
-
-# Weights for the overall score. Answer quality dominates; delivery adjusts it.
-SCORE_WEIGHTS = {
-    "answer": 0.50,
-    "communication": 0.20,
-    "confidence": 0.15,
-    "filler": 0.15,
-}
 
 
 class ConnectionManager:
@@ -144,18 +137,9 @@ def confidence_from_speech(filler_count: int, word_count: int, wpm: float | None
     return max(0.0, min(100.0, round(score, 1)))
 
 
-def filler_score(filler_count: int, word_count: int) -> float:
-    """100 when speech is clean, falling as filler density rises."""
-    if word_count <= 0:
-        return 0.0
-    ratio = filler_count / word_count
-    # 0% fillers -> 100; ~8% -> 0. Beyond that it is already at the floor.
-    return max(0.0, min(100.0, round(100.0 - (ratio * 1250), 1)))
-
-
-def _mean(values: list[float]) -> float | None:
-    usable = [v for v in values if v is not None]
-    return round(sum(usable) / len(usable), 1) if usable else None
+# Kept as a re-export: score_service owns the formula so the socket and the
+# completion endpoint cannot drift apart.
+filler_score = score_service.calculate_filler_score
 
 
 # --------------------------------------------------------------------------- #
@@ -186,57 +170,33 @@ def _persist_answer(db: Session, **fields: Any) -> Answer:
 
 
 def _finalise_session(db: Session, session_id: uuid.UUID) -> dict[str, Any]:
-    """Aggregate every answer into the session row and mark it completed."""
+    """Aggregate every answer into the session row and mark it completed.
+
+    The arithmetic lives in score_service so this path and
+    POST /sessions/{id}/complete always produce the same numbers. The LLM
+    written feedback is deliberately not generated here - it would add seconds
+    of latency to closing the socket; the completion endpoint fills it in.
+    """
     session = db.get(InterviewSession, session_id)
     if session is None:
         raise LookupError("session disappeared")
 
-    answers = db.scalars(
-        select(Answer).where(Answer.session_id == session_id)
-    ).all()
+    answers = db.scalars(select(Answer).where(Answer.session_id == session_id)).all()
+    scores = score_service.calculate_session_scores(list(answers))
 
-    total_fillers = sum(a.filler_count or 0 for a in answers)
-    total_words = sum(len((a.transcript or "").split()) for a in answers)
-    total_seconds = sum(a.duration_seconds or 0.0 for a in answers)
-
-    answer_avg = _mean([a.answer_score for a in answers])
-    comm_avg = _mean([a.communication_score for a in answers])
-    conf_avg = _mean([a.confidence_score for a in answers])
-    fill = filler_score(total_fillers, total_words)
-
-    overall = None
-    if answer_avg is not None:
-        overall = round(
-            answer_avg * SCORE_WEIGHTS["answer"]
-            + (comm_avg or 0) * SCORE_WEIGHTS["communication"]
-            + (conf_avg or 0) * SCORE_WEIGHTS["confidence"]
-            + fill * SCORE_WEIGHTS["filler"],
-            1,
-        )
-
-    session.answer_score = answer_avg
-    session.communication_score = comm_avg
-    session.confidence_score = conf_avg
-    session.filler_word_score = fill if answers else None
-    session.overall_score = overall
-    session.total_filler_count = total_fillers
-    session.avg_wpm = _mean([a.wpm for a in answers])
-    session.duration_minutes = round(total_seconds / 60, 2) if total_seconds else None
+    session.answer_score = scores["answer_score"]
+    session.communication_score = scores["communication_score"]
+    session.confidence_score = scores["confidence_score"]
+    session.filler_word_score = scores["filler_word_score"] if answers else None
+    session.overall_score = scores["overall_score"]
+    session.total_filler_count = scores["total_filler_count"]
+    session.avg_wpm = scores["avg_wpm"]
+    session.duration_minutes = scores["duration_minutes"]
     session.status = SessionStatus.COMPLETED.value
     session.completed_at = datetime.now(timezone.utc)
     db.commit()
 
-    return {
-        "overall_score": session.overall_score,
-        "answer_score": session.answer_score,
-        "communication_score": session.communication_score,
-        "confidence_score": session.confidence_score,
-        "filler_word_score": session.filler_word_score,
-        "total_filler_count": session.total_filler_count,
-        "avg_wpm": session.avg_wpm,
-        "duration_minutes": session.duration_minutes,
-        "answers_scored": len(answers),
-    }
+    return scores
 
 
 # --------------------------------------------------------------------------- #
