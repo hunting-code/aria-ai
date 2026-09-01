@@ -28,7 +28,17 @@ from starlette.websockets import WebSocketState
 from app.core.security import decode_token
 from app.models import Answer, InterviewSession, User
 from app.models.session import SessionStatus
-from app.services.llm_service import LLMUnavailableError, get_questions, llm_service
+from app.services.llm_service import (
+    MODE_COACH,
+    MODE_INTERVIEWER,
+    LLMUnavailableError,
+    assess_performance_so_far,
+    default_mode_for,
+    get_adaptive_question,
+    get_questions,
+    is_vague_answer,
+    llm_service,
+)
 from app.services.score_service import score_service
 
 logger = logging.getLogger(__name__)
@@ -156,10 +166,21 @@ def _load_session(db: Session, session_id: uuid.UUID, user_id: uuid.UUID):
     )
 
 
-def _count_answers(db: Session, session_id: uuid.UUID) -> int:
-    return len(
-        db.scalars(select(Answer.id).where(Answer.session_id == session_id)).all()
+def _load_answers(db: Session, session_id: uuid.UUID) -> list[Answer]:
+    return list(
+        db.scalars(
+            select(Answer)
+            .where(Answer.session_id == session_id)
+            .order_by(Answer.question_number, Answer.created_at)
+        ).all()
     )
+
+
+def _set_mode(db: Session, session_id: uuid.UUID, coach: bool) -> None:
+    session = db.get(InterviewSession, session_id)
+    if session is not None:
+        session.coach_mode = coach
+        db.commit()
 
 
 def _persist_answer(db: Session, **fields: Any) -> Answer:
@@ -256,11 +277,22 @@ async def interview_websocket(
         return
 
     job_role, difficulty = session.job_role, session.difficulty
-    questions = get_questions(job_role, difficulty)
+    total_questions = len(get_questions(job_role, difficulty))
+    coach_mode = bool(session.coach_mode)
 
     # Resuming a dropped interview continues from the answers already stored.
-    answered = await run_in_threadpool(_count_answers, db, session_uuid)
-    index = min(answered, len(questions) - 1)
+    prior = await run_in_threadpool(_load_answers, db, session_uuid)
+    scored_answers = [a for a in prior if not a.is_follow_up]
+    asked_questions = [a.question_text for a in prior]
+    index = min(len(scored_answers), total_questions - 1)
+
+    # The question list is chosen one at a time rather than up front: each pick
+    # depends on how the candidate has done so far.
+    performance = assess_performance_so_far(scored_answers)
+    current = get_adaptive_question(job_role, difficulty, performance, asked_questions)
+    if current is None:
+        current = {"text": "Tell me about a project you are proud of.", "tag": "Behavioral"}
+    pending_follow_up = False
 
     await manager.connect(session_id, websocket)
     history: list[dict[str, str]] = []
@@ -271,13 +303,19 @@ async def interview_websocket(
             websocket,
             {
                 "type": "question",
-                "content": questions[index],
+                "content": current["text"],
+                "tag": current.get("tag"),
                 "question_num": index + 1,
-                "total_questions": len(questions),
-                "resumed": answered > 0,
+                "total_questions": total_questions,
+                "resumed": bool(prior),
+                "is_follow_up": False,
+                "coach_mode": coach_mode,
+                "performance": performance,
+                "adapted": bool(current.get("adapted")),
             },
         )
-        history.append({"role": "assistant", "content": questions[index]})
+        history.append({"role": "assistant", "content": current["text"]})
+        asked_questions.append(current["text"])
 
         # ---- Main loop --------------------------------------------------- #
         while True:
@@ -303,6 +341,15 @@ async def interview_websocket(
                 await manager.send_json(websocket, {"type": "pong"})
                 continue
 
+            # ---- set_mode ------------------------------------------------- #
+            if msg_type == "set_mode":
+                coach_mode = bool(data.get("coach_mode", True))
+                await run_in_threadpool(_set_mode, db, session_uuid, coach_mode)
+                await manager.send_json(
+                    websocket, {"type": "mode_changed", "coach_mode": coach_mode}
+                )
+                continue
+
             # ---- answer_transcript --------------------------------------- #
             if msg_type == "answer_transcript":
                 transcript = str(data.get("transcript") or "").strip()
@@ -311,13 +358,14 @@ async def interview_websocket(
                     filler_data = {}
                 wpm = data.get("wpm")
                 duration = data.get("duration_seconds")
-                question_text = questions[index]
+                question_text = current["text"]
+                mode = MODE_COACH if coach_mode else MODE_INTERVIEWER
 
                 # Stream the interviewer's reply as it is generated.
                 collected: list[str] = []
                 try:
                     async for token in llm_service.get_ai_response(
-                        history, transcript, filler_data, wpm, job_role, difficulty
+                        history, transcript, filler_data, wpm, job_role, difficulty, mode
                     ):
                         collected.append(token)
                         if not await manager.send_json(
@@ -340,6 +388,7 @@ async def interview_websocket(
                     difficulty,
                     filler_data=filler_data,
                     wpm=wpm,
+                    mode=mode,
                 )
 
                 filler_count = int(filler_data.get("count") or 0)
@@ -354,6 +403,8 @@ async def interview_websocket(
                         session_id=session_uuid,
                         question_number=index + 1,
                         question_text=question_text,
+                        question_tag=current.get("tag"),
+                        is_follow_up=pending_follow_up,
                         transcript=transcript or None,
                         answer_score=scores["answer_score"],
                         communication_score=scores["communication_score"],
@@ -376,12 +427,22 @@ async def interview_websocket(
                 if feedback:
                     history.append({"role": "assistant", "content": feedback})
 
+                # A thin answer earns one follow-up, and only one: a follow-up
+                # that is itself vague would loop.
+                needs_follow_up = (
+                    not pending_follow_up
+                    and is_vague_answer(scores["answer_score"], transcript)
+                )
+
                 await manager.send_json(
                     websocket,
                     {
                         "type": "feedback_complete",
                         "feedback": feedback,
                         "question_num": index + 1,
+                        "is_follow_up": pending_follow_up,
+                        "follow_up_coming": needs_follow_up,
+                        "question_tag": current.get("tag"),
                         "scores": {
                             "answer_score": scores["answer_score"],
                             "communication_score": scores["communication_score"],
@@ -390,14 +451,40 @@ async def interview_websocket(
                             "improvements": scores.get("improvements", []),
                             "source": scores.get("source", "model"),
                         },
-                        "is_last_question": index + 1 >= len(questions),
+                        "is_last_question": index + 1 >= total_questions
+                        and not needs_follow_up,
                     },
                 )
+
+                if needs_follow_up:
+                    follow_up = await llm_service.generate_follow_up(
+                        question_text, transcript, job_role, difficulty, mode
+                    )
+                    pending_follow_up = True
+                    # Same question_number, so the follow-up does not advance
+                    # the interview or count as a new question.
+                    current = {"text": follow_up, "tag": current.get("tag")}
+                    asked_questions.append(follow_up)
+                    history.append({"role": "assistant", "content": follow_up})
+                    await manager.send_json(
+                        websocket,
+                        {
+                            "type": "question",
+                            "content": follow_up,
+                            "tag": current.get("tag"),
+                            "question_num": index + 1,
+                            "total_questions": total_questions,
+                            "is_follow_up": True,
+                            "coach_mode": coach_mode,
+                        },
+                    )
+                else:
+                    pending_follow_up = False
                 continue
 
             # ---- next_question -------------------------------------------- #
             if msg_type == "next_question":
-                if index + 1 >= len(questions):
+                if index + 1 >= total_questions:
                     summary = await run_in_threadpool(_finalise_session, db, session_uuid)
                     await manager.send_json(
                         websocket,
@@ -410,16 +497,44 @@ async def interview_websocket(
                     break
 
                 index += 1
+                pending_follow_up = False
+
+                answers_so_far = await run_in_threadpool(_load_answers, db, session_uuid)
+                performance = assess_performance_so_far(
+                    [a for a in answers_so_far if not a.is_follow_up]
+                )
+                nxt = get_adaptive_question(
+                    job_role, difficulty, performance, asked_questions
+                )
+                if nxt is None:
+                    summary = await run_in_threadpool(_finalise_session, db, session_uuid)
+                    await manager.send_json(
+                        websocket,
+                        {
+                            "type": "interview_complete",
+                            "session_id": session_id,
+                            "summary": summary,
+                        },
+                    )
+                    break
+
+                current = nxt
+                asked_questions.append(current["text"])
                 await manager.send_json(
                     websocket,
                     {
                         "type": "question",
-                        "content": questions[index],
+                        "content": current["text"],
+                        "tag": current.get("tag"),
                         "question_num": index + 1,
-                        "total_questions": len(questions),
+                        "total_questions": total_questions,
+                        "is_follow_up": False,
+                        "coach_mode": coach_mode,
+                        "performance": performance,
+                        "adapted": bool(current.get("adapted")),
                     },
                 )
-                history.append({"role": "assistant", "content": questions[index]})
+                history.append({"role": "assistant", "content": current["text"]})
                 continue
 
             # ---- end_interview -------------------------------------------- #

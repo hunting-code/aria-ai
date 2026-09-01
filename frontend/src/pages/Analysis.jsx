@@ -28,6 +28,7 @@ import {
 import { sessionsApi, extractErrorMessage } from '../services/api'
 import { Badge, Button, Card, LoadingSpinner, ScoreRing, cn } from '../components/ui'
 import QuestionBreakdown from '../components/interview/QuestionBreakdown'
+import FillerAttention from '../components/dashboard/FillerAttention'
 import useToast from '../store/toastStore'
 
 const CELEBRATION_THRESHOLD = 70
@@ -114,6 +115,7 @@ export default function Analysis() {
 
   const [session, setSession] = useState(null)
   const [previous, setPrevious] = useState(null)
+  const [stats, setStats] = useState(null)
   const [isLoading, setIsLoading] = useState(true)
   const [error, setError] = useState(null)
   const abortRef = useRef(null)
@@ -137,6 +139,11 @@ export default function Analysis() {
       setSession(data)
 
       // Find the previous completed session for the comparison chart.
+      try {
+        setStats(await sessionsApi.stats({ signal }))
+      } catch {
+        setStats(null)
+      }
       const all = await sessionsApi.mySessions({ signal })
       const earlier = all
         .filter(
@@ -196,6 +203,21 @@ export default function Analysis() {
       current: session[key] ?? null,
     }))
   }, [session, previous])
+
+  // Performance by question type, from this session's own answers.
+  const tagBreakdown = useMemo(() => {
+    const buckets = {}
+    for (const a of answers) {
+      if (!a.question_tag || a.answer_score == null) continue
+      ;(buckets[a.question_tag] ??= []).push(a.answer_score)
+    }
+    const rows = Object.entries(buckets).map(([tag, values]) => ({
+      tag,
+      score: Math.round((values.reduce((x, y) => x + y, 0) / values.length) * 10) / 10,
+      count: values.length,
+    }))
+    return rows.sort((x, y) => y.score - x.score)
+  }, [answers])
 
   const handleShare = async () => {
     const lines = [
@@ -377,6 +399,58 @@ export default function Analysis() {
           </Card>
         )}
       </section>
+
+      {/* ---- Attention: a filler word being leaned on ------------------------- */}
+      {stats?.filler_history ? (
+        <FillerAttention
+          fillerHistory={stats.filler_history}
+          className="mb-8 animate-slide-up"
+        />
+      ) : null}
+
+      {/* ---- Performance by question type ------------------------------------ */}
+      {tagBreakdown.length > 1 ? (
+        <Card padding="md" className="mb-8 animate-slide-up">
+          <h2 className="mb-1 font-display text-lg font-semibold">By question type</h2>
+          <p className="mb-4 text-xs text-aria-muted">
+            {(() => {
+              const best = tagBreakdown[0]
+              const worst = tagBreakdown[tagBreakdown.length - 1]
+              if (best.tag === worst.tag) return 'Average score per question type.'
+              const advice =
+                worst.tag === 'Behavioral'
+                  ? ' Practise the STAR method.'
+                  : worst.tag === 'Technical'
+                    ? ' Work through the fundamentals for this role.'
+                    : ''
+              return `You score ${Math.round(best.score)} on ${best.tag} but only ${Math.round(worst.score)} on ${worst.tag}.${advice}`
+            })()}
+          </p>
+          <div className="space-y-3">
+            {tagBreakdown.map((row) => (
+              <div key={row.tag}>
+                <div className="mb-1 flex items-baseline justify-between gap-2 text-sm">
+                  <span className="text-aria-text">
+                    {row.tag}
+                    <span className="ml-1.5 text-xs text-aria-muted">
+                      ({row.count} question{row.count === 1 ? '' : 's'})
+                    </span>
+                  </span>
+                  <span className="font-mono font-semibold tabular-nums text-aria-text">
+                    {Math.round(row.score)}
+                  </span>
+                </div>
+                <div className="h-2 w-full overflow-hidden rounded-full bg-aria-border">
+                  <div
+                    className="h-full rounded-full bg-aria-gradient"
+                    style={{ width: `${Math.min(100, Math.max(0, row.score))}%` }}
+                  />
+                </div>
+              </div>
+            ))}
+          </div>
+        </Card>
+      ) : null}
 
       {/* ---- Suggestions ----------------------------------------------------- */}
       {feedback.top_suggestions?.length ? (

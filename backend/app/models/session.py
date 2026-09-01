@@ -9,6 +9,7 @@ from typing import TYPE_CHECKING
 
 from sqlalchemy import (
     JSON,
+    Boolean,
     CheckConstraint,
     DateTime,
     Float,
@@ -18,6 +19,7 @@ from sqlalchemy import (
     String,
     Uuid,
     func,
+    text,
 )
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import Mapped, mapped_column, relationship
@@ -76,6 +78,11 @@ class InterviewSession(Base):
     # ---- Configuration ----
     job_role: Mapped[str] = mapped_column(String(50), nullable=False)
     difficulty: Mapped[str] = mapped_column(String(20), nullable=False)
+    # Coach mode explains mistakes; interviewer mode applies pressure. Defaults
+    # by difficulty when the session is created, and the candidate can toggle it.
+    coach_mode: Mapped[bool] = mapped_column(
+        Boolean, nullable=False, default=True, server_default=text("true")
+    )
     status: Mapped[str] = mapped_column(
         String(20),
         nullable=False,

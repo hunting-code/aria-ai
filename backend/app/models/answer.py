@@ -7,6 +7,7 @@ from datetime import datetime
 from typing import TYPE_CHECKING
 
 from sqlalchemy import (
+    Boolean,
     CheckConstraint,
     DateTime,
     Float,
@@ -14,9 +15,11 @@ from sqlalchemy import (
     Index,
     Integer,
     JSON,
+    String,
     Text,
     Uuid,
     func,
+    text,
 )
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import Mapped, mapped_column, relationship
@@ -49,6 +52,14 @@ class Answer(Base):
     # ---- Question / response ----
     question_number: Mapped[int] = mapped_column(Integer, nullable=False)
     question_text: Mapped[str] = mapped_column(Text, nullable=False)
+    # Behavioral | Technical | Situational | Culture Fit. Drives the
+    # per-question-type breakdown on the analysis screen.
+    question_tag: Mapped[str | None] = mapped_column(String(30), nullable=True)
+    # A follow-up shares its question_number with the answer that prompted it,
+    # so a probe never inflates the question count.
+    is_follow_up: Mapped[bool] = mapped_column(
+        Boolean, nullable=False, default=False, server_default=text("false")
+    )
     # Null between recording the audio and the STT result coming back.
     transcript: Mapped[str | None] = mapped_column(Text, nullable=True)
 

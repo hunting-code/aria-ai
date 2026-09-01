@@ -32,6 +32,7 @@ import {
 
 import useAuth from '../hooks/useAuth'
 import { sessionsApi, extractErrorMessage } from '../services/api'
+import StreakCard from '../components/dashboard/StreakCard'
 import { Badge, Button, Card, cn } from '../components/ui'
 import { TONE_TEXT, scoreTone } from '../components/ui/scoreColor'
 
@@ -306,6 +307,8 @@ export default function Home() {
   const navigate = useNavigate()
 
   const [sessions, setSessions] = useState([])
+  // Named to distinguish it from the client-derived `stats` below.
+  const [serverStats, setServerStats] = useState(null)
   const [isLoading, setIsLoading] = useState(true)
   const [error, setError] = useState(null)
 
@@ -320,6 +323,13 @@ export default function Home() {
     try {
       const data = await sessionsApi.mySessions({ signal })
       setSessions(Array.isArray(data) ? data : [])
+      // The streak comes from the stats endpoint; a failure there must not
+      // take the whole dashboard down with it.
+      try {
+        setServerStats(await sessionsApi.stats({ signal }))
+      } catch {
+        setServerStats(null)
+      }
     } catch (err) {
       // An aborted request is the effect cleaning up, not a failure.
       if (err?.code === 'ERR_CANCELED' || err?.name === 'CanceledError') return
@@ -389,6 +399,15 @@ export default function Home() {
 
       <div className="grid gap-6 xl:grid-cols-[minmax(0,1fr)_320px]">
         <div className="min-w-0 space-y-6">
+          {serverStats ? (
+            <StreakCard
+              streak={serverStats.current_streak}
+              longest={serverStats.longest_streak}
+              badge={serverStats.streak_badge}
+              nextBadgeIn={serverStats.next_badge_in}
+              className="animate-slide-up"
+            />
+          ) : null}
           {/* ---- 2. Stats row -------------------------------------------- */}
           <section aria-label="Your statistics">
             {isLoading ? (

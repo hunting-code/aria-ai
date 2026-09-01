@@ -24,8 +24,55 @@ from app.core.database import get_db
 from app.core.security import get_current_user
 from app.models import Answer, InterviewSession, User
 from app.models.session import SessionStatus
-from app.services.llm_service import llm_service
+from app.services.llm_service import MODE_COACH, default_mode_for, llm_service
 from app.services.score_service import score_service
+
+
+# Streak badge tiers. A streak counts consecutive *calendar days* on which at
+# least one interview was completed.
+STREAK_BADGES: tuple[tuple[int, str], ...] = (
+    (30, "30-day"),
+    (14, "14-day"),
+    (7, "7-day"),
+    (3, "3-day"),
+)
+
+
+def _streaks(sessions: list) -> tuple[int, int]:
+    """Current and longest run of consecutive days with a completed session.
+
+    Counting days rather than sessions means three interviews in one evening is
+    a one-day streak, which is what "consecutive days" has to mean for the
+    number to be worth anything. A streak stays alive if the last session was
+    today or yesterday - finishing at 23:50 should not be punished by a clock.
+    """
+    days = sorted(
+        {
+            _aware(s.completed_at or s.created_at).date()
+            for s in sessions
+            if s.status == SessionStatus.COMPLETED.value and (s.completed_at or s.created_at)
+        }
+    )
+    if not days:
+        return 0, 0
+
+    longest = run = 1
+    for previous, day in zip(days, days[1:]):
+        run = run + 1 if (day - previous).days == 1 else 1
+        longest = max(longest, run)
+
+    today = datetime.now(timezone.utc).date()
+    gap = (today - days[-1]).days
+    current = run if gap <= 1 else 0
+    return current, longest
+
+
+def _badge_for(streak: int) -> tuple[str | None, int | None]:
+    """The badge earned, and how many more days until the next one."""
+    earned = next((label for threshold, label in STREAK_BADGES if streak >= threshold), None)
+    upcoming = [t for t, _ in reversed(STREAK_BADGES) if t > streak]
+    return earned, (upcoming[0] - streak) if upcoming else None
+
 
 def _aware(value: datetime) -> datetime:
     """Treat a naive timestamp as UTC. SQLite gives back naive datetimes and
@@ -105,6 +152,9 @@ def create_session(
         job_role=payload.job_role.value,
         difficulty=payload.difficulty.value,
         status=SessionStatus.ACTIVE.value,
+        # Coaching by default, pressure for advanced. The candidate can toggle
+        # it mid-interview.
+        coach_mode=default_mode_for(payload.difficulty.value) == MODE_COACH,
     )
     db.add(session)
     try:
@@ -184,6 +234,33 @@ def session_stats(
         per_week.append({"week": f"{week + 1}w ago" if week else "This week", "sessions": count})
 
     roles = Counter(s.job_role for s in sessions if s.job_role)
+    current_streak, longest_streak = _streaks(sessions)
+    badge, next_in = _badge_for(current_streak)
+
+    # Per-filler counts across the last few sessions, so the analysis screen can
+    # say "you said 'like' 11 times; previously 9, 13, 11".
+    recent_ids = [s.id for s in sessions[:4]]
+    filler_history: dict[str, list[int]] = {}
+    tag_totals: dict[str, list[float]] = {}
+    if sessions:
+        rows = db.scalars(
+            select(Answer).where(Answer.session_id.in_([s.id for s in sessions]))
+        ).all()
+        by_session: dict[uuid.UUID, Counter] = {}
+        for a in rows:
+            if a.answer_score is not None and a.question_tag:
+                tag_totals.setdefault(a.question_tag, []).append(float(a.answer_score))
+            counter = by_session.setdefault(a.session_id, Counter())
+            for word in a.filler_words_detected or []:
+                counter[str(word).lower()] += 1
+        words = {w for sid in recent_ids for w in by_session.get(sid, Counter())}
+        for word in words:
+            # Newest first, matching how the analysis card reads it out.
+            filler_history[word] = [by_session.get(sid, Counter()).get(word, 0) for sid in recent_ids]
+
+    tag_performance = {
+        tag: round(sum(values) / len(values), 1) for tag, values in tag_totals.items()
+    }
 
     return SessionStats(
         total=len(sessions),
@@ -204,6 +281,12 @@ def session_stats(
             "overall": _avg("overall_score"),
         },
         sessions_per_week=per_week,
+        current_streak=current_streak,
+        longest_streak=longest_streak,
+        streak_badge=badge,
+        next_badge_in=next_in,
+        filler_history=filler_history,
+        tag_performance=tag_performance,
     )
 
 

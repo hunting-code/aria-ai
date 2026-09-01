@@ -84,13 +84,39 @@ DIFFICULTY_CALIBRATION: Final[dict[str, str]] = {
 }
 
 
-def build_system_prompt(job_role: str, difficulty: str) -> str:
+MODE_INTERVIEWER: Final[str] = "interviewer"
+MODE_COACH: Final[str] = "coach"
+
+MODE_PROMPTS: Final[dict[str, str]] = {
+    MODE_INTERVIEWER: (
+        "Mode: INTERVIEWER. Behave as you would in a real interview. Keep feedback "
+        "short and neutral, do not soften a weak answer, and do not teach. Move on "
+        "briskly. The candidate should feel evaluated, not tutored."
+    ),
+    MODE_COACH: (
+        "Mode: COACH. The candidate is here to improve, so explain your reasoning. "
+        "When an answer falls short, name what was missing and show the shape a "
+        "stronger answer would take - a structure, an example to include, a number "
+        "to quantify. Stay honest: encouragement never means inflating a score."
+    ),
+}
+
+
+def default_mode_for(difficulty: str) -> str:
+    """Coaching for newcomers, interview pressure for those targeting seniority."""
+    return MODE_INTERVIEWER if difficulty == "advanced" else MODE_COACH
+
+
+def build_system_prompt(
+    job_role: str, difficulty: str, mode: str = MODE_COACH
+) -> str:
     """Return the role-specific, difficulty-calibrated interviewer prompt.
 
     Unknown roles or difficulties fall back to sensible defaults rather than
     raising, so a stray value can never take an interview down mid-session.
     """
     persona = ROLE_PERSONAS.get(job_role, "an experienced interviewer")
+    mode_prompt = MODE_PROMPTS.get(mode, MODE_PROMPTS[MODE_COACH])
     focus = ROLE_FOCUS.get(job_role, "the substance and structure of their answers")
     calibration = DIFFICULTY_CALIBRATION.get(
         difficulty, DIFFICULTY_CALIBRATION["intermediate"]
@@ -114,6 +140,8 @@ What you evaluate:
 For this role, weight your judgement towards {focus}.
 
 Difficulty calibration: {calibration}
+
+{mode_prompt}
 
 You NEVER say 'good job' unless genuinely earned.
 You NEVER give generic feedback like 'work on communication'.
@@ -276,14 +304,58 @@ QUESTION_COUNTS: Final[dict[str, int]] = {
 }
 
 
+
+# --------------------------------------------------------------------------- #
+# Question tags
+# --------------------------------------------------------------------------- #
+# One tag per question, aligned by index with the pools above. Kept parallel
+# rather than folded into the question strings so the bank stays readable and
+# a tag can be corrected without touching the wording.
+BEHAVIORAL: Final[str] = "Behavioral"
+TECHNICAL: Final[str] = "Technical"
+SITUATIONAL: Final[str] = "Situational"
+CULTURE_FIT: Final[str] = "Culture Fit"
+
+QUESTION_TAGS: Final[dict[str, dict[str, list[str]]]] = {
+    "data_analyst": {
+        "beginner": [TECHNICAL, TECHNICAL, TECHNICAL, BEHAVIORAL, SITUATIONAL, TECHNICAL, TECHNICAL, BEHAVIORAL],
+        "intermediate": [TECHNICAL, SITUATIONAL, TECHNICAL, BEHAVIORAL, TECHNICAL, SITUATIONAL, TECHNICAL, BEHAVIORAL],
+        "advanced": [SITUATIONAL, TECHNICAL, SITUATIONAL, BEHAVIORAL, TECHNICAL, TECHNICAL, SITUATIONAL, TECHNICAL],
+    },
+    "software_engineer": {
+        "beginner": [TECHNICAL, TECHNICAL, TECHNICAL, BEHAVIORAL, CULTURE_FIT, TECHNICAL, SITUATIONAL, BEHAVIORAL],
+        "intermediate": [TECHNICAL, TECHNICAL, BEHAVIORAL, TECHNICAL, TECHNICAL, TECHNICAL, SITUATIONAL, TECHNICAL],
+        "advanced": [TECHNICAL, TECHNICAL, TECHNICAL, BEHAVIORAL, TECHNICAL, TECHNICAL, SITUATIONAL, SITUATIONAL],
+    },
+    "hr": {
+        "beginner": [CULTURE_FIT, SITUATIONAL, TECHNICAL, BEHAVIORAL, SITUATIONAL, SITUATIONAL, SITUATIONAL, BEHAVIORAL],
+        "intermediate": [SITUATIONAL, TECHNICAL, BEHAVIORAL, SITUATIONAL, TECHNICAL, BEHAVIORAL, SITUATIONAL, TECHNICAL],
+        "advanced": [SITUATIONAL, TECHNICAL, BEHAVIORAL, SITUATIONAL, SITUATIONAL, TECHNICAL, TECHNICAL, BEHAVIORAL],
+    },
+    "ai_engineer": {
+        "beginner": [TECHNICAL, TECHNICAL, TECHNICAL, TECHNICAL, BEHAVIORAL, SITUATIONAL, TECHNICAL, TECHNICAL],
+        "intermediate": [TECHNICAL, TECHNICAL, TECHNICAL, SITUATIONAL, BEHAVIORAL, TECHNICAL, TECHNICAL, SITUATIONAL],
+        "advanced": [TECHNICAL, TECHNICAL, SITUATIONAL, TECHNICAL, BEHAVIORAL, TECHNICAL, SITUATIONAL, SITUATIONAL],
+    },
+}
+
+QUESTION_TAG_VALUES: Final[tuple[str, ...]] = (BEHAVIORAL, TECHNICAL, SITUATIONAL, CULTURE_FIT)
+
+
+def tag_for(job_role: str, difficulty: str, index: int) -> str:
+    """Tag for one question, defaulting to Technical if the pools drift apart."""
+    tags = (QUESTION_TAGS.get(job_role) or {}).get(difficulty) or []
+    return tags[index] if 0 <= index < len(tags) else TECHNICAL
+
+
 def get_question_pool(job_role: str, difficulty: str) -> list[str]:
     """The full pool for a role/difficulty, falling back to intermediate."""
     role_bank = QUESTION_BANK.get(job_role) or DATA_ANALYST_QUESTIONS
     return role_bank.get(difficulty) or role_bank["intermediate"]
 
 
-def get_questions(job_role: str, difficulty: str) -> list[str]:
-    """The questions this interview will actually ask, in order."""
+def get_questions(job_role: str, difficulty: str) -> list[dict[str, str]]:
+    """The questions this interview will ask, in order, each with its tag."""
     pool = get_question_pool(job_role, difficulty)
     wanted = QUESTION_COUNTS.get(difficulty, 7)
     if wanted > len(pool):
@@ -296,7 +368,109 @@ def get_questions(job_role: str, difficulty: str) -> list[str]:
             len(pool),
             len(pool),
         )
-    return pool[:wanted]
+    return [
+        {"text": text, "tag": tag_for(job_role, difficulty, i)}
+        for i, text in enumerate(pool[:wanted])
+    ]
+
+
+# --------------------------------------------------------------------------- #
+# Adaptive difficulty
+# --------------------------------------------------------------------------- #
+PERFORMANCE_STRUGGLING: Final[str] = "struggling"
+PERFORMANCE_ON_TRACK: Final[str] = "on_track"
+PERFORMANCE_EXCELLING: Final[str] = "excelling"
+
+# Thresholds for the running average of answer scores.
+EXCELLING_AT: Final[float] = 80.0
+STRUGGLING_BELOW: Final[float] = 50.0
+
+# An answer is vague when it scores poorly AND is short: a low score on a long
+# answer is a wrong answer, which a follow-up will not rescue.
+VAGUE_SCORE_BELOW: Final[float] = 55.0
+VAGUE_WORDS_BELOW: Final[int] = 60
+
+# Where to look when the interview needs a harder or easier question than the
+# candidate's chosen difficulty.
+_HARDER = {"beginner": "intermediate", "intermediate": "advanced", "advanced": "advanced"}
+_EASIER = {"advanced": "intermediate", "intermediate": "beginner", "beginner": "beginner"}
+
+
+def assess_performance_so_far(answers_so_far: list) -> str:
+    """Classify how the candidate is doing from their scored answers.
+
+    Weights the two most recent answers double: an interview that has turned a
+    corner should be met where the candidate is now, not where they started.
+    """
+    scores = [
+        float(a.answer_score)
+        for a in (answers_so_far or [])
+        if getattr(a, "answer_score", None) is not None
+    ]
+    if not scores:
+        return PERFORMANCE_ON_TRACK
+
+    recent = scores[-2:]
+    weighted = scores + recent
+    average = sum(weighted) / len(weighted)
+
+    if average >= EXCELLING_AT:
+        return PERFORMANCE_EXCELLING
+    if average < STRUGGLING_BELOW:
+        return PERFORMANCE_STRUGGLING
+    return PERFORMANCE_ON_TRACK
+
+
+def is_vague_answer(answer_score: float | None, transcript: str | None) -> bool:
+    """True when an answer is thin enough that a follow-up is worth spending."""
+    if answer_score is None:
+        return False
+    words = len((transcript or "").split())
+    return answer_score < VAGUE_SCORE_BELOW and words < VAGUE_WORDS_BELOW
+
+
+def get_adaptive_question(
+    role: str,
+    base_difficulty: str,
+    performance_level: str,
+    asked_questions: list[str],
+) -> dict[str, str] | None:
+    """Pick the next question, adjusted to how the candidate is doing.
+
+    Excelling pulls from a harder pool, struggling from an easier one, and
+    anything already asked is skipped - which is what keeps two interviews for
+    the same role from being the same interview. Returns None once every pool
+    is exhausted.
+    """
+    asked = {q.strip().lower() for q in (asked_questions or []) if q}
+
+    if performance_level == PERFORMANCE_EXCELLING:
+        order = [_HARDER.get(base_difficulty, base_difficulty), base_difficulty]
+    elif performance_level == PERFORMANCE_STRUGGLING:
+        order = [_EASIER.get(base_difficulty, base_difficulty), base_difficulty]
+    else:
+        order = [base_difficulty]
+
+    # Fall back through every remaining pool rather than repeating a question.
+    for difficulty in [*order, "intermediate", "beginner", "advanced"]:
+        pool = get_question_pool(role, difficulty)
+        for i, text in enumerate(pool):
+            if text.strip().lower() not in asked:
+                return {
+                    "text": text,
+                    "tag": tag_for(role, difficulty, i),
+                    "difficulty": difficulty,
+                    "adapted": difficulty != base_difficulty,
+                }
+    return None
+
+
+FOLLOW_UP_INSTRUCTION: Final[str] = (
+    "That answer was thin. Ask ONE short follow-up that names something specific "
+    "the candidate did say and asks them to expand on the part they left out. "
+    "Phrase it as a single question, no preamble, under 30 words. Do not move on "
+    "to a new topic."
+)
 
 
 # --------------------------------------------------------------------------- #
@@ -350,6 +524,7 @@ class LLMService:
         wpm: float | None,
         role: str,
         difficulty: str = "intermediate",
+        mode: str = MODE_COACH,
     ) -> AsyncGenerator[str, None]:
         """Stream the interviewer's reply to an answer, token by token.
 
@@ -371,7 +546,7 @@ class LLMService:
             return
 
         messages = [
-            {"role": "system", "content": build_system_prompt(role, difficulty)},
+            {"role": "system", "content": build_system_prompt(role, difficulty, mode)},
             *conversation_history,
             {"role": "user", "content": user_turn},
         ]
@@ -404,6 +579,47 @@ class LLMService:
             logger.exception("OpenAI request failed")
             raise LLMUnavailableError("The interview model is unavailable.") from exc
 
+    async def generate_follow_up(
+        self,
+        question: str,
+        transcript: str,
+        role: str,
+        difficulty: str = "intermediate",
+        mode: str = MODE_COACH,
+    ) -> str:
+        """One targeted follow-up for a vague answer.
+
+        Falls back to a deterministic prompt when the model is unavailable, so
+        the interview never stalls waiting for a question that cannot arrive.
+        """
+        if not self.is_configured:
+            return (
+                "You touched on this only briefly - can you walk me through a "
+                "specific example, including what you actually did and what it changed?"
+            )
+        try:
+            response = await self.client.chat.completions.create(
+                model=self.model,
+                messages=[
+                    {"role": "system", "content": build_system_prompt(role, difficulty, mode)},
+                    {
+                        "role": "user",
+                        "content": (
+                            f"Question asked:\n{question}\n\n"
+                            f'Candidate\'s answer:\n"""\n{transcript.strip() or "(silence)"}\n"""\n\n'
+                            f"{FOLLOW_UP_INSTRUCTION}"
+                        ),
+                    },
+                ],
+                temperature=0.5,
+                max_tokens=90,
+            )
+            text = (response.choices[0].message.content or "").strip()
+            return text or "Can you expand on that with a specific example?"
+        except (AuthenticationError, RateLimitError, APIConnectionError, APIError):
+            logger.exception("Follow-up generation failed; using the generic prompt")
+            return "Can you expand on that with a specific example and the outcome?"
+
     # ---- Scoring ---------------------------------------------------------- #
     async def evaluate_answer(
         self,
@@ -413,6 +629,7 @@ class LLMService:
         difficulty: str = "intermediate",
         filler_data: dict[str, Any] | None = None,
         wpm: float | None = None,
+        mode: str = MODE_COACH,
     ) -> dict[str, Any]:
         """Score one answer.
 
@@ -440,7 +657,7 @@ class LLMService:
             response = await self.client.chat.completions.create(
                 model=self.model,
                 messages=[
-                    {"role": "system", "content": build_system_prompt(role, difficulty)},
+                    {"role": "system", "content": build_system_prompt(role, difficulty, mode)},
                     {
                         "role": "user",
                         "content": (
@@ -555,6 +772,15 @@ __all__ = [
     "QUESTION_COUNTS",
     "build_system_prompt",
     "get_questions",
+    "assess_performance_so_far",
+    "get_adaptive_question",
+    "is_vague_answer",
+    "default_mode_for",
+    "tag_for",
+    "QUESTION_TAGS",
+    "QUESTION_TAG_VALUES",
+    "MODE_COACH",
+    "MODE_INTERVIEWER",
     "get_question_pool",
     "llm_service",
     "DATA_ANALYST_QUESTIONS",

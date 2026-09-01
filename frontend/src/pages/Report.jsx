@@ -6,12 +6,21 @@
 
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { useNavigate, useParams } from 'react-router-dom'
-import { AlertCircle, ArrowLeft, Download, FileDown, Printer, RefreshCw } from 'lucide-react'
+import {
+  AlertCircle,
+  ArrowLeft,
+  Download,
+  FileDown,
+  MessagesSquare,
+  Printer,
+  RefreshCw,
+} from 'lucide-react'
 
 import useAuth from '../hooks/useAuth'
 import { reportApi, sessionsApi, extractErrorMessage } from '../services/api'
 import { Button, LoadingSpinner } from '../components/ui'
 import { gradeFor } from '../utils/scoreCalculator'
+import InterviewReplay from '../components/interview/InterviewReplay'
 import useToast from '../store/toastStore'
 
 const ROLE_LABELS = {
@@ -72,6 +81,7 @@ export default function Report() {
   const [isLoading, setIsLoading] = useState(true)
   const [error, setError] = useState(null)
   const [isExporting, setIsExporting] = useState(false)
+  const [showReplay, setShowReplay] = useState(false)
 
   const sheetRef = useRef(null)
   const abortRef = useRef(null)
@@ -249,6 +259,14 @@ export default function Report() {
           Back to analysis
         </Button>
         <div className="flex flex-wrap gap-2">
+          <Button
+            variant="ghost"
+            onClick={() => setShowReplay((v) => !v)}
+            aria-expanded={showReplay}
+            leftIcon={<MessagesSquare className="h-4 w-4" />}
+          >
+            {showReplay ? 'Hide Replay' : 'Replay Interview'}
+          </Button>
           <Button variant="ghost" onClick={() => window.print()} leftIcon={<Printer className="h-4 w-4" />}>
             Print
           </Button>
@@ -269,6 +287,13 @@ export default function Report() {
           </Button>
         </div>
       </div>
+
+      {showReplay ? (
+        <div className="mb-6 rounded-xl border border-aria-border bg-aria-base/40 p-4 print:hidden sm:p-6">
+          <h2 className="mb-4 font-display text-lg font-semibold">Interview replay</h2>
+          <InterviewReplay answers={session.answers ?? []} />
+        </div>
+      ) : null}
 
       {/* ---- The document sheet -------------------------------------------- */}
       <div

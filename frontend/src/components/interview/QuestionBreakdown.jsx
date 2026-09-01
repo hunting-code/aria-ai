@@ -1,5 +1,5 @@
 import { useId, useState } from 'react'
-import { ChevronDown, MessageSquare } from 'lucide-react'
+import { ChevronDown, CornerDownRight, MessageSquare } from 'lucide-react'
 
 import { ProgressBar, cn } from '../ui'
 import { scoreTone } from '../ui/scoreColor'
@@ -43,14 +43,26 @@ export default function QuestionBreakdown({ answer, defaultOpen = false }) {
           <span className="grid h-8 w-8 shrink-0 place-items-center rounded-lg border border-aria-border bg-aria-surface font-mono text-xs text-aria-muted">
             {answer.question_number}
           </span>
-          <span
-            className={cn(
-              'min-w-0 flex-1 text-sm text-aria-text',
-              // Collapsed rows stay one line so the list scans quickly.
-              !open && 'truncate',
-            )}
-          >
-            {answer.question_text}
+          <span className={cn('min-w-0 flex-1', !open && 'truncate')}>
+            {answer.is_follow_up || answer.question_tag ? (
+              <span className="mr-2 inline-flex flex-wrap gap-1.5 align-middle">
+                {answer.is_follow_up ? (
+                  <span className="inline-flex items-center gap-1 rounded-full border border-aria-amber/40 bg-aria-amber/10 px-1.5 py-0.5 text-[10px] font-medium text-aria-amber">
+                    <CornerDownRight className="h-2.5 w-2.5" aria-hidden="true" />
+                    Follow-up
+                  </span>
+                ) : null}
+                {answer.question_tag ? (
+                  <span className="rounded-full border border-aria-border px-1.5 py-0.5 text-[10px] text-aria-muted">
+                    {answer.question_tag}
+                  </span>
+                ) : null}
+              </span>
+            ) : null}
+            {/* Collapsed rows stay one line so the list scans quickly. */}
+            <span className={cn('text-sm text-aria-text', !open && 'align-middle')}>
+              {answer.question_text}
+            </span>
           </span>
           <span
             className={cn(

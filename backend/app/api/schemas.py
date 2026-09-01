@@ -141,6 +141,12 @@ class SessionStats(BaseModel):
     wpm_trend: list[TrendPoint] = Field(default_factory=list)
     dimension_averages: dict[str, float | None] = Field(default_factory=dict)
     sessions_per_week: list[dict] = Field(default_factory=list)
+    current_streak: int = 0
+    longest_streak: int = 0
+    streak_badge: str | None = None
+    next_badge_in: int | None = None
+    filler_history: dict[str, list[int]] = Field(default_factory=dict)
+    tag_performance: dict[str, float] = Field(default_factory=dict)
 
 
 class SessionCreate(BaseModel):
@@ -164,6 +170,7 @@ class SessionSummary(ORMModel):
     id: uuid.UUID
     job_role: str
     difficulty: str
+    coach_mode: bool = True
     status: SessionStatus
     overall_score: float | None = None
     answer_score: float | None = None
@@ -204,6 +211,8 @@ class AnswerResponse(ORMModel):
     session_id: uuid.UUID
     question_number: int
     question_text: str
+    question_tag: str | None = None
+    is_follow_up: bool = False
     transcript: str | None = None
     answer_score: float | None = None
     confidence_score: float | None = None

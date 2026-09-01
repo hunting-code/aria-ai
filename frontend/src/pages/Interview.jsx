@@ -11,7 +11,10 @@ import { useNavigate, useParams } from 'react-router-dom'
 import {
   AlertCircle,
   ArrowRight,
+  GraduationCap,
   Keyboard,
+  CornerDownRight,
+  UserCheck,
   Loader2,
   Mic,
   Square,
@@ -48,6 +51,9 @@ export default function Interview() {
   const [phase, setPhase] = useState('answering') // answering | submitted | complete
   const [history, setHistory] = useState([])
   const [serverError, setServerError] = useState(null)
+  const [questionTag, setQuestionTag] = useState(null)
+  const [isFollowUp, setIsFollowUp] = useState(false)
+  const [coachMode, setCoachMode] = useState(true)
 
   // ---- Answer input ------------------------------------------------------ //
   const [typedMode, setTypedMode] = useState(false)
@@ -58,6 +64,10 @@ export default function Interview() {
   const answerStartedAt = useRef(null)
 
   const audio = useAudio()
+  // Destructured because it is referenced inside the socket message handler:
+  // reset is a stable useCallback, whereas the audio object is a new value on
+  // every render and would churn the handler identity.
+  const { reset: resetAudio } = audio
 
   // ---- WebSocket --------------------------------------------------------- //
   const handleMessage = useCallback(
@@ -67,10 +77,17 @@ export default function Interview() {
           setQuestion(msg.content)
           setQuestionNum(msg.question_num)
           setTotalQuestions(msg.total_questions)
+          setQuestionTag(msg.tag ?? null)
+          setIsFollowUp(Boolean(msg.is_follow_up))
+          if (typeof msg.coach_mode === 'boolean') setCoachMode(msg.coach_mode)
           setFeedback('')
           setPhase('answering')
           setElapsed(0)
           answerStartedAt.current = null
+          break
+
+        case 'mode_changed':
+          setCoachMode(Boolean(msg.coach_mode))
           break
 
         case 'feedback_token':
@@ -80,15 +97,23 @@ export default function Interview() {
 
         case 'feedback_complete':
           setIsStreaming(false)
-          setPhase('submitted')
+          // When a follow-up is coming the server pushes it straight away, so
+          // the answer phase continues rather than offering "Next Question".
+          setPhase(msg.follow_up_coming ? 'answering' : 'submitted')
           setHistory((h) => [
             ...h.filter((a) => a.questionNumber !== msg.question_num),
             {
               questionNumber: msg.question_num,
               score: msg.scores?.answer_score ?? null,
               confidence: msg.scores?.confidence_score ?? null,
+              tag: msg.question_tag ?? null,
             },
           ])
+          if (msg.follow_up_coming) {
+            resetAudio()
+            setTypedAnswer('')
+            setElapsed(0)
+          }
           break
 
         case 'interview_complete':
@@ -105,7 +130,7 @@ export default function Interview() {
           break
       }
     },
-    [navigate],
+    [navigate, resetAudio],
   )
 
   const { send, isOpen, error: socketError, status } = useWebSocket(sessionId, {
@@ -209,6 +234,12 @@ export default function Interview() {
     submitAnswer(text, duration, detectFillers(text, duration), null)
   }
 
+  const toggleMode = () => {
+    const next = !coachMode
+    setCoachMode(next)
+    send({ type: 'set_mode', coach_mode: next })
+  }
+
   const handleNext = () => {
     audio.reset()
     setTypedAnswer('')
@@ -287,6 +318,30 @@ export default function Interview() {
           </div>
 
           <div className="flex shrink-0 items-center gap-3">
+            <button
+              type="button"
+              onClick={toggleMode}
+              aria-pressed={coachMode}
+              title={
+                coachMode
+                  ? 'Coach mode: ARIA explains what was missing'
+                  : 'Interviewer mode: terse, realistic pressure'
+              }
+              className={cn(
+                'hidden items-center gap-1.5 rounded-full border px-2.5 py-1 text-xs font-medium transition-colors sm:inline-flex',
+                'focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-aria-pulse',
+                coachMode
+                  ? 'border-aria-green/40 bg-aria-green/10 text-aria-green'
+                  : 'border-aria-blue/40 bg-aria-blue/10 text-aria-pulse',
+              )}
+            >
+              {coachMode ? (
+                <GraduationCap className="h-3.5 w-3.5" aria-hidden="true" />
+              ) : (
+                <UserCheck className="h-3.5 w-3.5" aria-hidden="true" />
+              )}
+              {coachMode ? 'Coach Mode' : 'Interviewer Mode'}
+            </button>
             <span
               className={cn(
                 'font-mono text-sm tabular-nums',
@@ -326,6 +381,21 @@ export default function Interview() {
                   className="h-1.5 w-1.5 animate-pulse-glow rounded-full bg-aria-pulse"
                 />
               </div>
+              {questionTag || isFollowUp ? (
+                <div className="mb-2 flex flex-wrap items-center gap-1.5">
+                  {isFollowUp ? (
+                    <span className="inline-flex items-center gap-1 rounded-full border border-aria-amber/40 bg-aria-amber/10 px-2 py-0.5 text-[11px] font-medium text-aria-amber">
+                      <CornerDownRight className="h-3 w-3" aria-hidden="true" />
+                      Follow-up
+                    </span>
+                  ) : null}
+                  {questionTag ? (
+                    <span className="rounded-full border border-aria-border bg-aria-surface/70 px-2 py-0.5 text-[11px] text-aria-muted">
+                      {questionTag}
+                    </span>
+                  ) : null}
+                </div>
+              ) : null}
               <QuestionDisplay question={question} />
             </Card>
 
