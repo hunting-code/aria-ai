@@ -97,6 +97,41 @@ def create_session(
     return session
 
 
+# NOTE: this must stay below /my-sessions. FastAPI matches in declaration
+# order, and a "/{session_id}" declared first would swallow "my-sessions"
+# and fail to parse it as a UUID.
+@router.get(
+    "/{session_id}",
+    response_model=SessionResponse,
+    summary="One interview session with its answers",
+    responses={
+        401: {"description": "Missing, expired or invalid token"},
+        404: {"description": "No such session for this user"},
+    },
+)
+def get_session(
+    session_id: uuid.UUID = Path(..., description="The interview to fetch."),
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+) -> InterviewSession:
+    """Return a session, its scores, its stored feedback and every answer.
+
+    Scoped to the owner at the query level, and a session belonging to someone
+    else is reported as missing rather than forbidden, so ids cannot be probed.
+    """
+    session = db.scalar(
+        select(InterviewSession).where(
+            InterviewSession.id == session_id,
+            InterviewSession.user_id == current_user.id,
+        )
+    )
+    if session is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND, detail="Session not found"
+        )
+    return session
+
+
 @router.post(
     "/{session_id}/complete",
     response_model=SessionResponse,

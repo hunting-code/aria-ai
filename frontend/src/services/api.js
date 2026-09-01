@@ -173,6 +173,23 @@ export const sessionsApi = {
     api
       .post(`${API_PREFIX}/sessions/create`, { job_role, difficulty })
       .then((r) => r.data),
+
+  /** GET /api/sessions/:id - one session with its answers and feedback. */
+  get: (sessionId, config = {}) =>
+    api.get(`${API_PREFIX}/sessions/${sessionId}`, config).then((r) => r.data),
+
+  /**
+   * POST /api/sessions/:id/complete - scores the session and writes its
+   * verdict. Idempotent: returns the stored feedback unless regenerate is set.
+   */
+  complete: (sessionId, { regenerate = false, signal } = {}) =>
+    api
+      .post(`${API_PREFIX}/sessions/${sessionId}/complete`, null, {
+        params: regenerate ? { regenerate: true } : undefined,
+        signal,
+        timeout: 90000,
+      })
+      .then((r) => r.data),
 }
 
 /* -------------------------------------------------------------------------- */

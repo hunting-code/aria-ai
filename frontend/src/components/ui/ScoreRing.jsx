@@ -33,6 +33,11 @@ export default function ScoreRing({
   label,
   showSuffix = true,
   animate = true,
+  duration = 1000,
+  // 'inside' keeps the caption within the ring; 'below' places it underneath,
+  // which is what multi-word labels need at the small size where they would
+  // otherwise wrap across the stroke.
+  labelPlacement = 'inside',
   className,
   ...props
 }) {
@@ -62,8 +67,7 @@ export default function ScoreRing({
     if (!shouldAnimate) return undefined
     const raf = requestAnimationFrame(() => setProgress(pct))
 
-    // Count the number up on the same 1s curve as the arc.
-    const duration = 1000
+    // Count the number up on the same curve as the arc.
     const start = performance.now()
     let frame = 0
     const tick = (now) => {
@@ -79,7 +83,7 @@ export default function ScoreRing({
       cancelAnimationFrame(raf)
       cancelAnimationFrame(frame)
     }
-  }, [pct, clamped, shouldAnimate])
+  }, [pct, clamped, shouldAnimate, duration])
 
   // Derived, not stored, when animation is off - nothing to synchronise.
   const shownPct = shouldAnimate ? progress : pct
@@ -91,9 +95,9 @@ export default function ScoreRing({
       ? `Score ${Math.round(clamped)} out of ${max}`
       : 'Not yet scored'
 
-  return (
+  const ring = (
     <div
-      className={cn('score-ring', className)}
+      className={cn('score-ring', labelPlacement === 'below' ? undefined : className)}
       style={{ '--ring-size': `${px}px`, '--ring-stroke': `${stroke}px` }}
       role="progressbar"
       aria-valuenow={hasScore ? Math.round(clamped) : undefined}
@@ -120,6 +124,8 @@ export default function ScoreRing({
           style={{
             '--dash-array': circumference,
             '--dash-offset': offset,
+            // Keep the arc sweep in step with the number count-up.
+            transitionDuration: `${duration}ms`,
             filter: hasScore ? `drop-shadow(0 0 6px ${TONE_HEX[tone]}66)` : 'none',
           }}
         />
@@ -143,7 +149,7 @@ export default function ScoreRing({
               <span className={cn('ml-0.5 font-mono text-aria-muted', suffix)}>%</span>
             ) : null}
           </div>
-          {label ? (
+          {label && labelPlacement === 'inside' ? (
             <span
               className={cn(
                 'mt-1 w-full px-0.5 text-center leading-tight text-aria-muted',
@@ -157,4 +163,17 @@ export default function ScoreRing({
       </div>
     </div>
   )
+
+  if (label && labelPlacement === 'below') {
+    return (
+      <div className={cn('flex flex-col items-center gap-2', className)}>
+        {ring}
+        <span className={cn('max-w-[10rem] text-center leading-tight text-aria-muted', labelClass)}>
+          {label}
+        </span>
+      </div>
+    )
+  }
+
+  return ring
 }

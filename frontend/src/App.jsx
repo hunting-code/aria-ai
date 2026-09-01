@@ -165,11 +165,13 @@ export default function App() {
               <Route path="/select-role" element={<RoleSelect />} />
               <Route path="/history" element={<History />} />
               <Route path="/settings" element={<Settings />} />
+              {/* Analysis is a review screen, not a timed one: it keeps the
+                  nav rail so the candidate can move on afterwards. */}
+              <Route path="/analysis/:sessionId" element={<Analysis />} />
             </Route>
 
             <Route element={<FocusLayout />}>
               <Route path="/interview/:sessionId" element={<Interview />} />
-              <Route path="/analysis/:sessionId" element={<Analysis />} />
               <Route path="/report/:sessionId" element={<Report />} />
             </Route>
           </Route>
