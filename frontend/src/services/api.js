@@ -175,4 +175,29 @@ export const sessionsApi = {
       .then((r) => r.data),
 }
 
+/* -------------------------------------------------------------------------- */
+/* Interview                                                                  */
+/* -------------------------------------------------------------------------- */
+export const interviewApi = {
+  /**
+   * POST /api/interview/transcribe - multipart upload of recorded audio.
+   *
+   * Content-Type is set to null so axios drops the instance's JSON default and
+   * lets the browser write `multipart/form-data; boundary=...` itself. Setting
+   * it manually would omit the boundary and the server could not parse it.
+   */
+  transcribe: ({ blob, durationSeconds, filename = 'answer.webm', signal }) => {
+    const form = new FormData()
+    form.append('file', blob, filename)
+    if (durationSeconds != null) form.append('duration_seconds', String(durationSeconds))
+    return api
+      .post(`${API_PREFIX}/interview/transcribe`, form, {
+        headers: { 'Content-Type': null },
+        signal,
+        timeout: 60000,
+      })
+      .then((r) => r.data)
+  },
+}
+
 export default api
