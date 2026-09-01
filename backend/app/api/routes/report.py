@@ -47,6 +47,7 @@ async def download_report_pdf(
         select(InterviewSession).where(
             InterviewSession.id == session_id,
             InterviewSession.user_id == current_user.id,
+            InterviewSession.deleted_at.is_(None),
         )
     )
     if session is None:
@@ -62,7 +63,10 @@ async def download_report_pdf(
 
     history = db.scalars(
         select(InterviewSession)
-        .where(InterviewSession.user_id == current_user.id)
+        .where(
+            InterviewSession.user_id == current_user.id,
+            InterviewSession.deleted_at.is_(None),
+        )
         .order_by(InterviewSession.created_at.desc())
         .limit(5)
     ).all()

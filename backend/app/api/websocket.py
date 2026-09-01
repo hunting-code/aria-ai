@@ -151,6 +151,7 @@ def _load_session(db: Session, session_id: uuid.UUID, user_id: uuid.UUID):
         select(InterviewSession).where(
             InterviewSession.id == session_id,
             InterviewSession.user_id == user_id,
+            InterviewSession.deleted_at.is_(None),
         )
     )
 

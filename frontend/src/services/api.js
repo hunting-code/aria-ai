@@ -174,6 +174,27 @@ export const sessionsApi = {
       .post(`${API_PREFIX}/sessions/create`, { job_role, difficulty })
       .then((r) => r.data),
 
+  /** GET /api/sessions/stats - dashboard aggregates and trends. */
+  stats: (config = {}) =>
+    api.get(`${API_PREFIX}/sessions/stats`, config).then((r) => r.data),
+
+  /** DELETE /api/sessions/:id - soft delete. Resolves with nothing (204). */
+  remove: (sessionId) =>
+    api.delete(`${API_PREFIX}/sessions/${sessionId}`).then(() => true),
+
+  /**
+   * GET /api/sessions/my-sessions - one page of sessions.
+   * Returns the rows plus the total from X-Total-Count, which the server
+   * exposes through CORS so "load more" knows when to stop.
+   */
+  page: ({ limit = 12, offset = 0, signal } = {}) =>
+    api
+      .get(`${API_PREFIX}/sessions/my-sessions`, { params: { limit, offset }, signal })
+      .then((r) => ({
+        items: Array.isArray(r.data) ? r.data : [],
+        total: Number(r.headers['x-total-count'] ?? 0),
+      })),
+
   /** GET /api/sessions/:id - one session with its answers and feedback. */
   get: (sessionId, config = {}) =>
     api.get(`${API_PREFIX}/sessions/${sessionId}`, config).then((r) => r.data),

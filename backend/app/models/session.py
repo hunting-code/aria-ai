@@ -105,6 +105,11 @@ class InterviewSession(Base):
     final_feedback: Mapped[dict | None] = mapped_column(JSONDict, nullable=True)
 
     # ---- Lifecycle ----
+    # Soft delete: rows are kept so a deletion cannot silently rewrite past
+    # statistics, and every query filters on this being NULL.
+    deleted_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True, index=True
+    )
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), nullable=False
     )

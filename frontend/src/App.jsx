@@ -18,7 +18,7 @@ import { AriaLogo } from './components/ui/Navbar'
 import LoadingSpinner from './components/ui/LoadingSpinner'
 
 import Analysis from './pages/Analysis'
-import History from './pages/History'
+import Sessions from './pages/Sessions'
 import Home from './pages/Home'
 import Interview from './pages/Interview'
 import Login from './pages/Login'
@@ -163,7 +163,7 @@ export default function App() {
             <Route element={<DashboardLayout />}>
               <Route path="/" element={<Home />} />
               <Route path="/select-role" element={<RoleSelect />} />
-              <Route path="/history" element={<History />} />
+              <Route path="/history" element={<Sessions />} />
               <Route path="/settings" element={<Settings />} />
               {/* Analysis is a review screen, not a timed one: it keeps the
                   nav rail so the candidate can move on afterwards. */}

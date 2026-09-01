@@ -120,6 +120,29 @@ class TokenData(BaseModel):
 # --------------------------------------------------------------------------- #
 # Interview sessions
 # --------------------------------------------------------------------------- #
+class TrendPoint(BaseModel):
+    """One point on a dashboard trend line."""
+
+    session_id: uuid.UUID
+    date: datetime
+    value: float | None = None
+
+
+class SessionStats(BaseModel):
+    """Aggregates behind the dashboard and history charts."""
+
+    total: int = 0
+    avg_score: float | None = None
+    best_score: float | None = None
+    sessions_this_week: int = 0
+    score_trend: list[TrendPoint] = Field(default_factory=list)
+    most_practiced_role: str | None = None
+    filler_word_trend: list[TrendPoint] = Field(default_factory=list)
+    wpm_trend: list[TrendPoint] = Field(default_factory=list)
+    dimension_averages: dict[str, float | None] = Field(default_factory=dict)
+    sessions_per_week: list[dict] = Field(default_factory=list)
+
+
 class SessionCreate(BaseModel):
     """Start a new interview. The owner comes from the bearer token."""
 
@@ -130,13 +153,25 @@ class SessionCreate(BaseModel):
 
 
 class SessionSummary(ORMModel):
-    """Condensed session, for dashboard and history lists."""
+    """Condensed session, for dashboard and history lists.
+
+    Carries the component scores as well as the overall: the history cards
+    draw a bar per metric, and omitting them left four of five bars reading
+    zero rather than "not scored". Answers are still excluded - those are what
+    make SessionResponse expensive.
+    """
 
     id: uuid.UUID
     job_role: str
     difficulty: str
     status: SessionStatus
     overall_score: float | None = None
+    answer_score: float | None = None
+    confidence_score: float | None = None
+    communication_score: float | None = None
+    filler_word_score: float | None = None
+    total_filler_count: int = 0
+    avg_wpm: float | None = None
     duration_minutes: float | None = None
     created_at: datetime
     completed_at: datetime | None = None
@@ -146,12 +181,6 @@ class SessionResponse(SessionSummary):
     """A full session, including every score breakdown."""
 
     user_id: uuid.UUID
-    answer_score: float | None = None
-    confidence_score: float | None = None
-    communication_score: float | None = None
-    filler_word_score: float | None = None
-    total_filler_count: int = 0
-    avg_wpm: float | None = None
     final_feedback: dict | None = None
     answers: list["AnswerResponse"] = Field(default_factory=list)
 
@@ -234,6 +263,8 @@ __all__ = [
     "FinalFeedback",
     "MessageResponse",
     "SessionCreate",
+    "SessionStats",
+    "TrendPoint",
     "SessionResponse",
     "SessionSummary",
     "Token",
