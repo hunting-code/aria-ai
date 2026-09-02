@@ -13,21 +13,26 @@ import re
 from collections.abc import AsyncGenerator
 from typing import Any, Final
 
-from openai import (
-    APIConnectionError,
-    APIError,
-    AsyncOpenAI,
-    AuthenticationError,
-    RateLimitError,
-)
+import groq
+import openai
+from openai import AsyncOpenAI
 
 from app.core.config import get_settings
+
+# Groq's SDK mirrors OpenAI's chat.completions surface, so one call site serves
+# both providers - only the client object and the model name differ. The
+# exception classes are distinct types though, so both sets must be caught.
+AuthErrors = (openai.AuthenticationError, groq.AuthenticationError)
+RateErrors = (openai.RateLimitError, groq.RateLimitError)
+ConnErrors = (openai.APIConnectionError, groq.APIConnectionError)
+ApiErrors = (openai.APIError, groq.APIError)
+PROVIDER_ERRORS = AuthErrors + RateErrors + ConnErrors + ApiErrors
 
 logger = logging.getLogger(__name__)
 settings = get_settings()
 
 PLACEHOLDER_KEYS: Final[frozenset[str]] = frozenset(
-    {"", "sk-replace-me", "your-openai-key-here", "sk-test", "changeme"}
+    {"", "sk-replace-me", "your-openai-key-here", "your-groq-key-here", "sk-test", "changeme"}
 )
 
 
@@ -107,6 +112,31 @@ def default_mode_for(difficulty: str) -> str:
     return MODE_INTERVIEWER if difficulty == "advanced" else MODE_COACH
 
 
+# The correctness contract. Both the conversational prompt and the JSON scorer
+# reference it so a spoken verdict and a stored verdict never disagree.
+VERDICTS: Final[frozenset[str]] = frozenset(
+    {"correct", "partially_correct", "incorrect", "off_topic"}
+)
+
+ANSWER_RUBRIC: Final[str] = """Judge every answer against what a competent
+candidate would actually say, and commit to one verdict:
+
+- correct: the substance is right and supported with specifics. No factual errors.
+- partially_correct: the direction is right but something material is missing,
+  hand-waved, or slightly wrong.
+- incorrect: the claim is factually wrong, or the reasoning does not hold up.
+- off_topic: the answer does not address the question that was asked.
+
+Rules you must not break:
+- State the verdict plainly in your first sentence. "That's correct - ...",
+  "That's partly right, but ...", "That's not right - ...".
+- When something is wrong, say what the right answer is. Never leave a
+  misconception standing.
+- Never call a vague answer correct. Confidence is not correctness.
+- Judge the content, not the delivery. Filler words and pace are scored
+  separately and must not change the verdict."""
+
+
 def build_system_prompt(
     job_role: str, difficulty: str, mode: str = MODE_COACH
 ) -> str:
@@ -140,6 +170,8 @@ What you evaluate:
 For this role, weight your judgement towards {focus}.
 
 Difficulty calibration: {calibration}
+
+{ANSWER_RUBRIC}
 
 {mode_prompt}
 
@@ -495,20 +527,32 @@ class LLMService:
     """
 
     def __init__(self) -> None:
-        self._client: AsyncOpenAI | None = None
-        self.model = settings.OPENAI_MODEL
+        self._client = None
+        self.provider = (settings.LLM_PROVIDER or "groq").strip().lower()
+        self.model = (
+            settings.GROQ_LLM_MODEL if self.provider == "groq" else settings.OPENAI_MODEL
+        )
+
+    @property
+    def _api_key(self) -> str:
+        key = settings.GROQ_API_KEY if self.provider == "groq" else settings.OPENAI_API_KEY
+        return (key or "").strip()
 
     @property
     def is_configured(self) -> bool:
-        """True when a real-looking API key is present."""
-        key = (settings.OPENAI_API_KEY or "").strip()
+        """True when a real-looking API key is present for the active provider."""
+        key = self._api_key
         return key not in PLACEHOLDER_KEYS and len(key) > 20
 
     @property
-    def client(self) -> AsyncOpenAI:
+    def client(self):
         # Built on first use, not at import: settings are read once at startup.
         if self._client is None:
-            self._client = AsyncOpenAI(api_key=settings.OPENAI_API_KEY)
+            self._client = (
+                groq.AsyncGroq(api_key=self._api_key)
+                if self.provider == "groq"
+                else AsyncOpenAI(api_key=self._api_key)
+            )
         return self._client
 
     # ---- Questions ------------------------------------------------------- #
@@ -558,7 +602,8 @@ class LLMService:
                 messages=messages,
                 stream=True,
                 temperature=0.7,
-                max_tokens=300,
+                max_tokens=700,
+                **self._reasoning_kwargs(),
             )
             async for chunk in stream:
                 if not chunk.choices:
@@ -566,20 +611,19 @@ class LLMService:
                 token = chunk.choices[0].delta.content
                 if token:
                     yield token
-        except AuthenticationError as exc:
-            logger.error("OpenAI rejected the API key: %s", exc)
+        except AuthErrors as exc:
+            logger.error("%s rejected the API key: %s", self.provider, exc)
             raise LLMUnavailableError(
-                "The interview model is not configured correctly."
+                "The AI service is not configured correctly."
             ) from exc
-        except RateLimitError as exc:
-            logger.warning("OpenAI rate limit or quota hit: %s", exc)
+        except RateErrors as exc:
+            logger.warning("%s rate limit or quota hit: %s", self.provider, exc)
             raise LLMUnavailableError(
-                "The interview model is unavailable - the OpenAI account may be "
-                "rate limited or out of credits."
+                "The AI service is temporarily unavailable."
             ) from exc
-        except (APIConnectionError, APIError) as exc:
-            logger.exception("OpenAI request failed")
-            raise LLMUnavailableError("The interview model is unavailable.") from exc
+        except (*ConnErrors, *ApiErrors) as exc:
+            logger.exception("%s request failed", self.provider)
+            raise LLMUnavailableError("The AI service is temporarily unavailable.") from exc
 
     async def generate_follow_up(
         self,
@@ -614,11 +658,12 @@ class LLMService:
                     },
                 ],
                 temperature=0.5,
-                max_tokens=90,
+                max_tokens=400,
+                **self._reasoning_kwargs(),
             )
             text = (response.choices[0].message.content or "").strip()
             return text or "Can you expand on that with a specific example?"
-        except (AuthenticationError, RateLimitError, APIConnectionError, APIError):
+        except PROVIDER_ERRORS:
             logger.exception("Follow-up generation failed; using the generic prompt")
             return "Can you expand on that with a specific example and the outcome?"
 
@@ -645,14 +690,21 @@ class LLMService:
             return self._offline_evaluation(transcript, filler_data, wpm)
 
         rubric = (
-            "Score the answer from 0 to 100 on two axes and return JSON with exactly "
-            "these keys: answer_score (number), communication_score (number), "
+            "Score the answer and return JSON with exactly these keys: "
+            "verdict (one of \"correct\", \"partially_correct\", \"incorrect\", "
+            "\"off_topic\"), "
+            "correctness_note (string, one sentence saying what was right or wrong - "
+            "if anything was wrong, state the correct answer), "
+            "answer_score (number 0-100), communication_score (number 0-100), "
             "feedback_text (string, 2-3 sentences referencing what they said), "
             "strengths (array of at most 3 short strings), "
             "improvements (array of at most 3 short strings).\n"
-            "answer_score covers relevance, depth and specificity. "
-            "communication_score covers structure, clarity and concision. "
-            "Be strict: an answer with no concrete example cannot exceed 60."
+            "answer_score covers correctness, relevance, depth and specificity, and "
+            "must agree with the verdict: incorrect or off_topic caps it at 35, "
+            "partially_correct sits between 40 and 70, and only a correct answer "
+            "backed by a concrete example may exceed 80. "
+            "communication_score covers structure, clarity and concision, and is "
+            "judged independently of whether the answer was right."
         )
 
         try:
@@ -671,11 +723,14 @@ class LLMService:
                 ],
                 response_format={"type": "json_object"},
                 temperature=0.2,
-                max_tokens=400,
+                # Reasoning models spend this budget before emitting content, so
+                # it has to cover the thinking as well as the JSON itself.
+                max_tokens=1200,
+                **self._reasoning_kwargs(),
             )
             raw = response.choices[0].message.content or "{}"
             data = json.loads(raw)
-        except (AuthenticationError, RateLimitError, APIConnectionError, APIError):
+        except PROVIDER_ERRORS:
             logger.exception("Scoring call failed; falling back to the heuristic")
             return self._offline_evaluation(transcript, filler_data, wpm)
         except (json.JSONDecodeError, IndexError, AttributeError):
@@ -683,7 +738,12 @@ class LLMService:
             return self._offline_evaluation(transcript, filler_data, wpm)
 
         # Never trust model output shape: clamp numbers, bound the lists.
+        verdict = str(data.get("verdict") or "").strip().lower().replace(" ", "_")
+        if verdict not in VERDICTS:
+            verdict = "unscored"
         return {
+            "verdict": verdict,
+            "correctness_note": str(data.get("correctness_note") or "").strip(),
             "answer_score": _clamp(data.get("answer_score")),
             "communication_score": _clamp(data.get("communication_score")),
             "feedback_text": str(data.get("feedback_text") or "").strip(),
@@ -693,6 +753,16 @@ class LLMService:
         }
 
     # ---- Helpers ---------------------------------------------------------- #
+    def _reasoning_kwargs(self) -> dict[str, Any]:
+        """Hold back reasoning models so the token budget reaches the answer.
+
+        The gpt-oss family thinks before it writes and will otherwise hit the
+        cap mid-JSON. Other models reject the parameter, so it is opt-in.
+        """
+        if "gpt-oss" in self.model:
+            return {"reasoning_effort": "low"}
+        return {}
+
     @staticmethod
     def _format_metrics(filler_data: dict[str, Any], wpm: float | None) -> str:
         count = filler_data.get("count", 0)
@@ -753,6 +823,10 @@ class LLMService:
             improvements.append("Aim for roughly 130-150 words per minute")
 
         return {
+            # The heuristic reads length and pace only - it genuinely cannot
+            # tell right from wrong, so it declines to guess a verdict.
+            "verdict": "unscored",
+            "correctness_note": "",
             "answer_score": round(answer_score, 1),
             "communication_score": round(communication_score, 1),
             "feedback_text": (

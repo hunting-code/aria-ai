@@ -2,8 +2,8 @@
 
 Wire format, both directions: {"type": ..., ...}.
 
-  server -> client   question | feedback_token | feedback_complete |
-                     interview_complete | error | pong
+  server -> client   question | thinking | feedback_token | feedback_complete |
+                     interview_complete | mode_changed | error | pong
   client -> server   answer_transcript | next_question | end_interview | ping
 
 The endpoint is mounted in `app.main` at /ws/{session_id}; this module owns the
@@ -361,6 +361,11 @@ async def interview_websocket(
                 question_text = current["text"]
                 mode = MODE_COACH if coach_mode else MODE_INTERVIEWER
 
+                await manager.send_json(
+                    websocket,
+                    {"type": "thinking", "question_num": index + 1},
+                )
+
                 # Stream the interviewer's reply as it is generated.
                 collected: list[str] = []
                 try:
@@ -455,6 +460,8 @@ async def interview_websocket(
                         "follow_up_coming": needs_follow_up,
                         "question_tag": current.get("tag"),
                         "scores": {
+                            "verdict": scores.get("verdict", "unscored"),
+                            "correctness_note": scores.get("correctness_note", ""),
                             "answer_score": scores["answer_score"],
                             "communication_score": scores["communication_score"],
                             "confidence_score": confidence,

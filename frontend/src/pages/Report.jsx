@@ -226,7 +226,7 @@ export default function Report() {
           <Button onClick={load} leftIcon={<RefreshCw className="h-4 w-4" />}>
             Try again
           </Button>
-          <Button variant="outline" onClick={() => navigate('/')}>
+          <Button variant="outline" onClick={() => navigate('/dashboard')}>
             Dashboard
           </Button>
         </div>

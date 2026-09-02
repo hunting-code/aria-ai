@@ -14,7 +14,7 @@ import useAuth from '../../hooks/useAuth'
 import cn from './cn'
 
 const LINKS = [
-  { to: '/', label: 'Home', icon: Home, end: true },
+  { to: '/dashboard', label: 'Home', icon: Home, end: true },
   { to: '/select-role', label: 'New Interview', icon: Mic },
   { to: '/history', label: 'History', icon: History },
   { to: '/settings', label: 'Settings', icon: Settings },

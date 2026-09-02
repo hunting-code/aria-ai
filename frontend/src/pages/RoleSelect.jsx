@@ -587,7 +587,7 @@ export default function RoleSelect() {
       <div className="mt-8 flex items-center justify-between gap-4 border-t border-aria-border pt-6">
         <Button
           variant="ghost"
-          onClick={() => (step === 1 ? navigate('/') : go(step - 1))}
+          onClick={() => (step === 1 ? navigate('/dashboard') : go(step - 1))}
           leftIcon={<ArrowLeft className="h-4 w-4" />}
         >
           {step === 1 ? 'Cancel' : 'Back'}

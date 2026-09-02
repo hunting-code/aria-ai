@@ -10,6 +10,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useNavigate, useParams } from 'react-router-dom'
 import {
   AlertCircle,
+  CheckCircle2,
   ArrowRight,
   GraduationCap,
   Keyboard,
@@ -33,6 +34,21 @@ import { calculateConfidence, calculateWpm } from '../utils/scoreCalculator'
 
 const MIN_TYPED_CHARS = 10
 
+// How the model's correctness verdict is shown. "unscored" is deliberately
+// absent: the heuristic fallback cannot judge correctness, so it claims nothing.
+const VERDICT_STYLES = {
+  correct: { label: 'Correct', className: 'border-aria-green/40 bg-aria-green/10 text-aria-green' },
+  partially_correct: {
+    label: 'Partly right',
+    className: 'border-aria-amber/40 bg-aria-amber/10 text-aria-amber',
+  },
+  incorrect: { label: 'Incorrect', className: 'border-aria-red/40 bg-aria-red/10 text-aria-red' },
+  off_topic: {
+    label: 'Off topic',
+    className: 'border-aria-red/40 bg-aria-red/10 text-aria-red',
+  },
+}
+
 function formatClock(seconds) {
   const s = Math.max(0, Math.floor(seconds))
   return `${String(Math.floor(s / 60)).padStart(2, '0')}:${String(s % 60).padStart(2, '0')}`
@@ -51,6 +67,14 @@ export default function Interview() {
   const [phase, setPhase] = useState('answering') // answering | submitted | complete
   const [history, setHistory] = useState([])
   const [serverError, setServerError] = useState(null)
+  // Feedback failures belong in the feedback panel, not the page-level banner:
+  // the interview is still usable and the answer can simply be resubmitted.
+  const [feedbackError, setFeedbackError] = useState(null)
+  const [isThinking, setIsThinking] = useState(false)
+  const [verdict, setVerdict] = useState(null)
+  // The last *scored* delivery figures, so the panel can honestly say
+  // "from your last answer" instead of showing a live value that has been reset.
+  const [lastScored, setLastScored] = useState(null)
   const [questionTag, setQuestionTag] = useState(null)
   const [isFollowUp, setIsFollowUp] = useState(false)
   const [coachMode, setCoachMode] = useState(true)
@@ -84,19 +108,36 @@ export default function Interview() {
           setPhase('answering')
           setElapsed(0)
           answerStartedAt.current = null
+          setVerdict(null)
+          setFeedbackError(null)
+          setIsThinking(false)
           break
 
         case 'mode_changed':
           setCoachMode(Boolean(msg.coach_mode))
           break
 
+        case 'thinking':
+          setIsThinking(true)
+          setFeedback('')
+          setFeedbackError(null)
+          setVerdict(null)
+          break
+
         case 'feedback_token':
+          setIsThinking(false)
           setIsStreaming(true)
           setFeedback((f) => f + msg.token)
           break
 
         case 'feedback_complete':
           setIsStreaming(false)
+          setIsThinking(false)
+          setVerdict(msg.scores?.verdict ?? null)
+          setLastScored({
+            confidence: msg.scores?.confidence_score ?? null,
+            answerScore: msg.scores?.answer_score ?? null,
+          })
           // When a follow-up is coming the server pushes it straight away, so
           // the answer phase continues rather than offering "Next Question".
           setPhase(msg.follow_up_coming ? 'answering' : 'submitted')
@@ -118,12 +159,23 @@ export default function Interview() {
 
         case 'interview_complete':
           setPhase('complete')
-          navigate(`/analysis/${msg.session_id}`, { replace: true })
+          setIsStreaming(false)
+          setIsThinking(false)
+          window.setTimeout(() => {
+            navigate(`/analysis/${msg.session_id}`, { replace: true })
+          }, 1600)
           break
 
         case 'error':
-          setServerError(msg.message)
           setIsStreaming(false)
+          setIsThinking(false)
+          if (msg.code === 'feedback_failed') {
+            // Recoverable: the question stands and the answer can be given again.
+            setFeedbackError(msg.message || 'Feedback could not be generated.')
+            setPhase('answering')
+          } else {
+            setServerError(msg.message)
+          }
           break
 
         default:
@@ -208,6 +260,9 @@ export default function Interview() {
         return
       }
       setFeedback('')
+      setFeedbackError(null)
+      setVerdict(null)
+      setIsThinking(true)
       setIsStreaming(true)
     },
     [send],
@@ -215,6 +270,7 @@ export default function Interview() {
 
   const handleMicClick = async () => {
     setServerError(null)
+    setFeedbackError(null)
     if (audio.isRecording) {
       const result = await audio.stopRecording()
       const text = result?.transcript ?? audio.transcript
@@ -263,6 +319,11 @@ export default function Interview() {
   }
 
   const isLastQuestion = questionNum > 0 && questionNum >= totalQuestions
+  const verdictStyle = verdict ? VERDICT_STYLES[verdict] ?? null : null
+  // Live figures are only meaningful while an answer is actually in progress.
+  // Before the first word of question 1 there is nothing to report, and the
+  // panel must say so rather than showing the formula's empty-input default.
+  const isAnswering = wordCount > 0 && phase === 'answering' 
   const error = serverError || socketError || audio.error
 
   // ---- Connecting ---------------------------------------------------------- //
@@ -286,7 +347,7 @@ export default function Interview() {
             This interview could not be opened
           </h1>
           <p className="mt-2 text-sm text-aria-muted">{socketError}</p>
-          <Button className="mt-6" onClick={() => navigate('/')}>
+          <Button className="mt-6" onClick={() => navigate('/dashboard')}>
             Back to dashboard
           </Button>
         </Card>
@@ -414,10 +475,30 @@ export default function Interview() {
             </Card>
 
             <Card padding="md">
-              <p className="mb-2 text-xs font-medium uppercase tracking-wider text-aria-muted">
-                Feedback
-              </p>
-              {feedback ? (
+              <div className="mb-2 flex items-center justify-between gap-2">
+                <p className="text-xs font-medium uppercase tracking-wider text-aria-muted">
+                  Feedback
+                </p>
+                {verdictStyle ? (
+                  <span
+                    className={cn(
+                      'animate-score-count rounded-full border px-2 py-0.5 text-[11px] font-semibold',
+                      verdictStyle.className,
+                    )}
+                  >
+                    {verdictStyle.label}
+                  </span>
+                ) : null}
+              </div>
+
+              {feedbackError ? (
+                <div className="flex items-start gap-2 text-sm text-aria-amber">
+                  <AlertCircle className="mt-0.5 h-4 w-4 shrink-0" aria-hidden="true" />
+                  <span>
+                    {feedbackError} Your answer was not lost - submit it again to retry.
+                  </span>
+                </div>
+              ) : feedback ? (
                 <p
                   className="whitespace-pre-wrap text-sm leading-relaxed text-aria-text"
                   aria-live="polite"
@@ -427,11 +508,23 @@ export default function Interview() {
                     <span className="ml-0.5 inline-block h-4 w-0.5 animate-pulse bg-aria-pulse align-middle" />
                   ) : null}
                 </p>
-              ) : isStreaming ? (
+              ) : isThinking || isStreaming ? (
                 <LoadingSpinner size="sm" showLabel label="ARIA is thinking" />
               ) : (
                 <p className="text-sm text-aria-muted">Waiting for your answer…</p>
               )}
+
+              {/* The primary way forward sits directly under the feedback the
+                  candidate has just read, not only in the fixed bottom bar. */}
+              {phase === 'submitted' && !isStreaming ? (
+                <Button
+                  className="mt-4 w-full"
+                  onClick={handleNext}
+                  rightIcon={<ArrowRight className="h-4 w-4" />}
+                >
+                  {isLastQuestion ? 'Finish Interview' : 'Next Question'}
+                </Button>
+              ) : null}
             </Card>
           </section>
 
@@ -492,10 +585,14 @@ export default function Interview() {
                     </button>
                     <p className="mt-3 text-sm text-aria-muted" aria-live="polite">
                       {audio.isTranscribing
-                        ? 'Processing…'
+                        ? 'Transcribing your answer…'
                         : audio.isRecording
-                          ? 'Recording…'
-                          : 'Tap to answer'}
+                          ? 'Recording - tap to stop and submit'
+                          : phase === 'submitted'
+                            ? 'Answer submitted'
+                            : audio.transcript
+                              ? 'Tap to add more'
+                              : 'Tap to answer'}
                     </p>
                   </div>
                 </>
@@ -516,7 +613,11 @@ export default function Interview() {
                   <p dangerouslySetInnerHTML={{ __html: highlighted }} />
                 ) : (
                   <p className="text-aria-muted">
-                    {audio.isRecording ? 'Listening…' : 'Your words will appear here.'}
+                    {audio.isRecording
+                      ? 'Listening…'
+                      : audio.isTranscribing
+                        ? 'Transcribing…'
+                        : 'Your words will appear here.'}
                   </p>
                 )}
               </div>
@@ -530,10 +631,11 @@ export default function Interview() {
             <div className="-mx-4 flex snap-x gap-4 overflow-x-auto px-4 pb-2 scroll-touch lg:mx-0 lg:block lg:overflow-visible lg:px-0 lg:pb-0">
               <div className="min-w-[15rem] flex-1 snap-start lg:min-w-0">
             <MetricsPanel
-              confidence={liveConfidence}
-              wpm={liveWpm}
+              confidence={isAnswering ? liveConfidence : lastScored?.confidence ?? null}
+              wpm={isAnswering ? liveWpm : null}
               fillerData={liveFillers}
               isLive={audio.isRecording}
+              hasScored={Boolean(lastScored)}
             />
               </div>
               <div className="min-w-[15rem] flex-1 snap-start lg:mt-4 lg:min-w-0">
@@ -548,6 +650,22 @@ export default function Interview() {
           </section>
         </div>
       </main>
+
+      {/* ---- Completion ------------------------------------------------------ */}
+      {phase === 'complete' ? (
+        <div
+          role="status"
+          aria-live="assertive"
+          className="fixed inset-0 z-[60] grid place-items-center bg-aria-void/90 backdrop-blur-sm"
+        >
+          <div className="flex flex-col items-center gap-4 px-6 text-center">
+            <CheckCircle2 className="h-12 w-12 text-aria-green" aria-hidden="true" />
+            <h2 className="font-display text-2xl font-semibold">Interview complete</h2>
+            <p className="text-sm text-aria-muted">Scoring your answers…</p>
+            <LoadingSpinner size="sm" />
+          </div>
+        </div>
+      ) : null}
 
       {/* ---- Bottom bar ---------------------------------------------------- */}
       <footer className="fixed inset-x-0 bottom-0 z-40 border-t border-aria-border bg-aria-base/85 backdrop-blur-md">

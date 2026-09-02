@@ -3,6 +3,15 @@ import { Check, Gauge, MessageSquareWarning } from 'lucide-react'
 import { Card, ScoreRing, cn } from '../ui'
 import { wpmTone } from '../../utils/scoreCalculator'
 
+// Pace advice keyed by the same tone the number is coloured with, so the
+// colour and the words can never disagree.
+const WPM_GUIDANCE = {
+  green: 'Good pace - hold it here',
+  amber: 'Slightly off the 120-140 band',
+  red: 'Well outside 120-140 WPM',
+  muted: 'ideal: 120-140 WPM',
+}
+
 const TONE_TEXT = {
   green: 'text-aria-green',
   amber: 'text-aria-amber',
@@ -11,7 +20,7 @@ const TONE_TEXT = {
 }
 
 /** Live delivery metrics: confidence, pace and filler words. */
-export default function MetricsPanel({ confidence, wpm, fillerData, isLive }) {
+export default function MetricsPanel({ confidence, wpm, fillerData, isLive, hasScored }) {
   const tone = wpmTone(wpm)
   const flagged = Object.entries(fillerData?.flaggedWords ?? {}).sort((a, b) => b[1] - a[1])
 
@@ -23,7 +32,11 @@ export default function MetricsPanel({ confidence, wpm, fillerData, isLive }) {
         </p>
         <ScoreRing value={confidence} size="md" animate={false} />
         <p className="mt-2 text-center text-xs text-aria-muted">
-          {isLive ? 'Updating as you speak' : 'From your last answer'}
+          {isLive
+            ? 'Updating as you speak'
+            : hasScored
+              ? 'From your last answer'
+              : 'Answer a question to see this'}
         </p>
       </Card>
 
@@ -40,7 +53,9 @@ export default function MetricsPanel({ confidence, wpm, fillerData, isLive }) {
         >
           {wpm ? Math.round(wpm) : '--'}
         </p>
-        <p className="mt-1 text-xs text-aria-muted">ideal: 120-140 WPM</p>
+        <p className="mt-1 text-xs text-aria-muted">
+          {wpm ? WPM_GUIDANCE[tone] : 'ideal: 120-140 WPM'}
+        </p>
       </Card>
 
       <Card padding="md">

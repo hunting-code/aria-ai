@@ -13,9 +13,8 @@ import re
 import statistics
 from typing import Any, Final
 
-from openai import APIConnectionError, APIError, AuthenticationError, RateLimitError
 
-from app.services.llm_service import LLMService, build_system_prompt
+from app.services.llm_service import PROVIDER_ERRORS, LLMService, build_system_prompt
 
 logger = logging.getLogger(__name__)
 
@@ -131,7 +130,7 @@ class ScoreService:
                 max_tokens=400,
             )
             data = json.loads(response.choices[0].message.content or "{}")
-        except (AuthenticationError, RateLimitError, APIConnectionError, APIError):
+        except PROVIDER_ERRORS:
             logger.exception("Answer scoring failed; falling back to the heuristic")
             return self._heuristic_answer_score(text)
         except (json.JSONDecodeError, IndexError, AttributeError):
@@ -407,7 +406,7 @@ class ScoreService:
                 max_tokens=900,
             )
             data = json.loads(response.choices[0].message.content or "{}")
-        except (AuthenticationError, RateLimitError, APIConnectionError, APIError):
+        except PROVIDER_ERRORS:
             logger.exception("Final feedback generation failed; using the offline summary")
             return self._offline_final_feedback(scores, answers)
         except (json.JSONDecodeError, IndexError, AttributeError):

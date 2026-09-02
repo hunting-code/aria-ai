@@ -101,7 +101,7 @@ export default function Navbar({ onOpenSidebar, showMenuButton = false }) {
           ) : null}
 
           <Link
-            to="/"
+            to="/dashboard"
             className="rounded-md focus-visible:outline-none"
             aria-label="ARIA AI home"
           >

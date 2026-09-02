@@ -14,12 +14,18 @@ export default function Login() {
   const storeError = useAuth((s) => s.error)
   const clearError = useAuth((s) => s.clearError)
 
-  const [form, setForm] = useState({ username: '', password: '' })
+  // The landing page's "Try demo account" button arrives with credentials in
+  // router state, so the form starts filled and one click signs the demo in.
+  const prefill = location.state
+  const [form, setForm] = useState({
+    username: prefill?.username ?? '',
+    password: prefill?.password ?? '',
+  })
   const [showPassword, setShowPassword] = useState(false)
   const [error, setError] = useState(null)
 
   // Where the user was headed before the redirect to /login.
-  const from = location.state?.from?.pathname ?? '/'
+  const from = location.state?.from?.pathname ?? '/dashboard'
 
   const update = (field) => (event) => {
     setForm((f) => ({ ...f, [field]: event.target.value }))

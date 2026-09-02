@@ -22,6 +22,7 @@ import { PageSkeleton } from './components/ui/Skeleton'
 // Pages are code-split: the interview screen pulls in recharts and the report
 // pulls in the PDF stack, and nobody should download either to reach /login.
 const Analysis = lazy(() => import('./pages/Analysis'))
+const Landing = lazy(() => import('./pages/Landing'))
 const Sessions = lazy(() => import('./pages/Sessions'))
 const Home = lazy(() => import('./pages/Home'))
 const Interview = lazy(() => import('./pages/Interview'))
@@ -77,8 +78,18 @@ function RequireAuth() {
 /** Keeps signed-in users off /login and /register. */
 function RedirectIfAuthenticated() {
   const isAuthenticated = useAuth((s) => s.isAuthenticated)
-  if (isAuthenticated) return <Navigate to="/" replace />
+  if (isAuthenticated) return <Navigate to="/dashboard" replace />
   return <Outlet />
+}
+
+/**
+ * The public landing page. A signed-in visitor is bounced straight to their
+ * dashboard - the marketing pitch is for people who are not customers yet.
+ */
+function LandingGate() {
+  const isAuthenticated = useAuth((s) => s.isAuthenticated)
+  if (isAuthenticated) return <Navigate to="/dashboard" replace />
+  return <Landing />
 }
 
 /** Navbar + collapsible sidebar, for the dashboard-style pages. */
@@ -161,6 +172,7 @@ export default function App() {
         <Suspense fallback={<div className="px-4 pt-24 sm:px-6"><PageSkeleton /></div>}>
         <Routes>
           {/* Public */}
+          <Route path="/" element={<LandingGate />} />
           <Route element={<RedirectIfAuthenticated />}>
             <Route path="/login" element={<Login />} />
             <Route path="/register" element={<Register />} />
@@ -169,7 +181,7 @@ export default function App() {
           {/* Protected */}
           <Route element={<RequireAuth />}>
             <Route element={<DashboardLayout />}>
-              <Route path="/" element={<Home />} />
+              <Route path="/dashboard" element={<Home />} />
               <Route path="/select-role" element={<RoleSelect />} />
               <Route path="/history" element={<Sessions />} />
               <Route path="/settings" element={<Settings />} />
@@ -184,8 +196,8 @@ export default function App() {
             </Route>
           </Route>
 
-          {/* Unknown paths fall back to the dashboard, which will bounce to
-              /login if the visitor is not signed in. */}
+          {/* Unknown paths fall back to the landing page, which forwards
+              signed-in users to their dashboard. */}
           <Route path="*" element={<Navigate to="/" replace />} />
         </Routes>
         </Suspense>

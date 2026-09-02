@@ -125,7 +125,7 @@ export default function Register() {
         `Welcome to ARIA, ${user?.full_name?.split(' ')[0] || user?.username}`,
         'Your account is ready. Pick a role to start your first interview.',
       )
-      navigate('/', { replace: true })
+      navigate('/dashboard', { replace: true })
     } catch (err) {
       setSubmitError(err.message)
     }

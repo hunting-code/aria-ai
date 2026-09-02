@@ -48,9 +48,18 @@ class Settings(BaseSettings):
     ALGORITHM: str = "HS256"
     ACCESS_TOKEN_EXPIRE_MINUTES: int = Field(default=1440, ge=1)
 
-    # ---- OpenAI (feedback and scoring) ----
-    OPENAI_API_KEY: str
+    # ---- Language model (feedback and scoring) ----
+    # "groq" or "openai". Groq is the default because its free tier covers both
+    # chat and Whisper; switching to "openai" needs a funded OPENAI_API_KEY.
+    LLM_PROVIDER: str = "groq"
+
+    # Optional: only required when LLM_PROVIDER is "openai".
+    OPENAI_API_KEY: str = ""
     OPENAI_MODEL: str = "gpt-4o-mini"
+
+    # Groq chat model. Must support streaming and JSON mode - the reasoning
+    # models (gpt-oss-20b) spend their budget before emitting content.
+    GROQ_LLM_MODEL: str = "openai/gpt-oss-120b"
 
     # ---- Groq (speech-to-text) ----
     # Transcription is split onto Groq because its free tier covers Whisper.
@@ -121,8 +130,13 @@ class Settings(BaseSettings):
             )
         elif len(self.SECRET_KEY) < 32:
             problems.append("SECRET_KEY is shorter than 32 characters")
-        if self.OPENAI_API_KEY in (PLACEHOLDER_OPENAI_KEY, ""):
-            problems.append("OPENAI_API_KEY is missing or still the .env.example placeholder")
+        if self.LLM_PROVIDER == "openai" and self.OPENAI_API_KEY in (
+            PLACEHOLDER_OPENAI_KEY,
+            "",
+        ):
+            problems.append(
+                "LLM_PROVIDER is 'openai' but OPENAI_API_KEY is missing or a placeholder"
+            )
         if self.GROQ_API_KEY in (PLACEHOLDER_GROQ_KEY, ""):
             problems.append(
                 "GROQ_API_KEY is missing - speech-to-text will be unavailable"
