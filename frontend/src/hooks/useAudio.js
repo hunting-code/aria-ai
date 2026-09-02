@@ -11,6 +11,7 @@ import { useCallback, useEffect, useRef, useState } from 'react'
 
 import { interviewApi, extractErrorMessage } from '../services/api'
 import { detectFillers } from '../utils/fillerDetector'
+import useToast from '../store/toastStore'
 
 const CHUNK_MS = 3000
 
@@ -59,6 +60,9 @@ export default function useAudio({ onPartial, onFinal } = {}) {
   const startedAtRef = useRef(0)
   const tickRef = useRef(null)
   const inFlightRef = useRef(false)
+  // One warning per recording: a 60-second answer uploads ~19 times and each
+  // one would otherwise raise its own toast.
+  const warnedRef = useRef(false)
   const abortRef = useRef(null)
   const mimeRef = useRef(null)
   // Live input level (0..1), read by the waveform through getLevel(). Kept in a
@@ -139,10 +143,24 @@ export default function useAudio({ onPartial, onFinal } = {}) {
       } catch (err) {
         if (err?.code === 'ERR_CANCELED' || err?.name === 'CanceledError') return null
         if (!aliveRef.current) return null
-        // A failed partial is not worth interrupting the recording for; a
-        // failed final is, because it is the answer being submitted.
-        if (final) setError(extractErrorMessage(err, 'Could not transcribe your answer.'))
-        else console.warn('Partial transcription failed:', err?.message)
+
+        // Transcription failing must never stop the recording: the audio is
+        // still being captured and the candidate can still type. Warn once and
+        // carry on.
+        const message = extractErrorMessage(err, 'Could not transcribe your answer.')
+        console.warn('Transcription failed:', err?.response?.status, message)
+
+        if (!warnedRef.current) {
+          warnedRef.current = true
+          useToast
+            .getState()
+            .warning(
+              'Transcription unavailable',
+              'Your answer is still being recorded. Use the text input if this persists.',
+            )
+        }
+
+        if (final) setError(message)
         return null
       } finally {
         inFlightRef.current = false
@@ -198,6 +216,7 @@ export default function useAudio({ onPartial, onFinal } = {}) {
     streamRef.current = stream
     recorderRef.current = recorder
     startedAtRef.current = Date.now()
+    warnedRef.current = false
 
     setAudioBlob(null)
     setTranscript('')
@@ -294,7 +313,14 @@ export default function useAudio({ onPartial, onFinal } = {}) {
     inFlightRef.current = false
 
     const data = await transcribeSoFar({ final: true })
-    return { blob, durationSeconds: Number(elapsed.toFixed(2)), ...(data ?? {}) }
+    // The blob is returned either way: if transcription failed, the caller still
+    // has the recording and can decide what to do with it.
+    return {
+      blob,
+      durationSeconds: Number(elapsed.toFixed(2)),
+      transcriptionFailed: data === null,
+      ...(data ?? {}),
+    }
   }, [teardown, transcribeSoFar])
 
   const reset = useCallback(() => {
@@ -309,6 +335,7 @@ export default function useAudio({ onPartial, onFinal } = {}) {
     setLiveTranscript('')
     setDurationSeconds(0)
     setError(null)
+    warnedRef.current = false
   }, [teardown])
 
   /** Current input level, 0..1. Read inside an animation frame. */

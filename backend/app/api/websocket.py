@@ -374,8 +374,15 @@ async def interview_websocket(
                             # Peer vanished mid-stream; stop generating.
                             raise WebSocketDisconnect(code=WS_NORMAL_CLOSURE)
                 except LLMUnavailableError as exc:
+                    # Report and keep the socket open: the candidate can retry
+                    # the answer without losing the interview.
                     await manager.send_json(
-                        websocket, {"type": "error", "message": str(exc)}
+                        websocket,
+                        {
+                            "type": "error",
+                            "code": "feedback_failed",
+                            "message": str(exc),
+                        },
                     )
                     continue
 
@@ -419,7 +426,11 @@ async def interview_websocket(
                     logger.exception("Could not save answer for session %s", session_id)
                     await manager.send_json(
                         websocket,
-                        {"type": "error", "message": "Your answer could not be saved."},
+                        {
+                            "type": "error",
+                            "code": "save_failed",
+                            "message": "Your answer could not be saved.",
+                        },
                     )
                     continue
 

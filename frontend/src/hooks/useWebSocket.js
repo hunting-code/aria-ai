@@ -7,11 +7,12 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 
 import { FATAL_CLOSE_CODES, WS_STATUS, interviewSocketUrl } from '../services/websocket'
+import useToast from '../store/toastStore'
 
-// Three attempts with exponential backoff (0.8s, 1.6s, 3.2s) before giving up
-// and telling the candidate to reload.
+// Three attempts with exponential backoff (1s, 2s, 4s) before giving up and
+// telling the candidate to reload.
 const MAX_RETRIES = 3
-const BASE_DELAY_MS = 800
+const BASE_DELAY_MS = 1000
 
 export default function useWebSocket(sessionId, { onMessage, enabled = true } = {}) {
   const [status, setStatus] = useState(WS_STATUS.IDLE)
@@ -19,6 +20,9 @@ export default function useWebSocket(sessionId, { onMessage, enabled = true } = 
 
   const socketRef = useRef(null)
   const retriesRef = useRef(0)
+  // Guards the "reconnecting" toast so a run of retries does not stack four of
+  // them on top of each other.
+  const warnedRef = useRef(false)
   // Reconnect goes through a ref so connect() never references itself while it
   // is still being initialised.
   const connectRef = useRef(null)
@@ -56,6 +60,10 @@ export default function useWebSocket(sessionId, { onMessage, enabled = true } = 
     socketRef.current = socket
 
     socket.onopen = () => {
+      if (warnedRef.current) {
+        useToast.getState().success('Reconnected', 'Your interview is live again.')
+        warnedRef.current = false
+      }
       retriesRef.current = 0
       setStatus(WS_STATUS.OPEN)
       setError(null)
@@ -91,8 +99,20 @@ export default function useWebSocket(sessionId, { onMessage, enabled = true } = 
       }
 
       if (retriesRef.current >= MAX_RETRIES) {
+        warnedRef.current = false
+        useToast
+          .getState()
+          .error(
+            'Connection lost',
+            'Could not reconnect after 3 attempts. Reload the page to resume - your answers so far are saved.',
+          )
         setError('Lost connection to the interview. Reload to resume.')
         return
+      }
+
+      if (!warnedRef.current) {
+        warnedRef.current = true
+        useToast.getState().warning('Connection lost', 'Reconnecting…')
       }
 
       const delay = BASE_DELAY_MS * 2 ** retriesRef.current
@@ -115,7 +135,20 @@ export default function useWebSocket(sessionId, { onMessage, enabled = true } = 
       clearTimer()
       const socket = socketRef.current
       socketRef.current = null
-      if (socket && socket.readyState <= WebSocket.OPEN) socket.close(1000, 'Leaving')
+      if (!socket) return
+
+      if (socket.readyState === WebSocket.CONNECTING) {
+        // Calling close() on a socket that is still CONNECTING makes the browser
+        // log "WebSocket is closed before the connection is established". React
+        // StrictMode mounts, unmounts and remounts every effect in development,
+        // so the first socket is always torn down mid-handshake. Let the
+        // handshake finish, then close cleanly.
+        socket.addEventListener('open', () => socket.close(1000, 'Leaving'), { once: true })
+        socket.addEventListener('error', () => {}, { once: true })
+        return
+      }
+
+      if (socket.readyState === WebSocket.OPEN) socket.close(1000, 'Leaving')
     }
   }, [connect])
 

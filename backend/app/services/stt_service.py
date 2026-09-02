@@ -48,7 +48,18 @@ _HALLUCINATED_SILENCE = re.compile(
 
 
 class STTUnavailableError(RuntimeError):
-    """Transcription could not be performed."""
+    """Transcription could not be performed.
+
+    Carries `kind` so the route can answer with a status code that matches what
+    actually went wrong, and `detail` with the provider's own message. A single
+    opaque 503 for every failure sends the caller into a retry loop for problems
+    that retrying cannot fix - an exhausted credit balance being the obvious one.
+    """
+
+    def __init__(self, message: str, *, kind: str = "unavailable", detail: str = "") -> None:
+        super().__init__(message)
+        self.kind = kind
+        self.detail = detail
 
 
 class STTService:
@@ -99,28 +110,74 @@ class STTService:
 
     def _validate(self, audio_bytes: bytes) -> None:
         if not audio_bytes:
-            raise STTUnavailableError("The recording was empty.")
+            raise STTUnavailableError("The recording was empty.", kind="empty")
         if len(audio_bytes) > MAX_AUDIO_BYTES:
             raise STTUnavailableError(
                 f"That recording is {len(audio_bytes) / 1_048_576:.1f} MB; "
-                f"the limit is {MAX_AUDIO_BYTES // 1_048_576} MB."
+                f"the limit is {MAX_AUDIO_BYTES // 1_048_576} MB.",
+                kind="too_large",
             )
         if not self.is_configured:
             # No offline fallback exists for speech: silently returning "" would
             # look to the candidate like their answer was not heard.
             raise STTUnavailableError(
-                "Speech-to-text is not configured. Set OPENAI_API_KEY to enable it."
+                "Speech-to-text is not configured. Set OPENAI_API_KEY in "
+                "backend/.env and restart the server - settings are read once at "
+                "startup, so a key added afterwards is not picked up.",
+                kind="not_configured",
             )
 
     @staticmethod
-    def _wrap_api_error(exc: Exception) -> STTUnavailableError:
+    def _openai_message(exc: Exception) -> str:
+        """The provider's own message, when it exposes one."""
+        body = getattr(exc, "body", None)
+        if isinstance(body, dict):
+            error = body.get("error")
+            if isinstance(error, dict) and error.get("message"):
+                return str(error["message"])
+        return str(exc)
+
+    @classmethod
+    def _wrap_api_error(cls, exc: Exception) -> STTUnavailableError:
+        detail = cls._openai_message(exc)
+
         if isinstance(exc, AuthenticationError):
-            return STTUnavailableError("Speech-to-text is not configured correctly.")
-        if isinstance(exc, RateLimitError):
             return STTUnavailableError(
-                "Transcription is busy right now. Please try again in a moment."
+                "OpenAI API key is invalid or missing.", kind="auth", detail=detail
             )
-        return STTUnavailableError("Transcription is temporarily unavailable.")
+
+        if isinstance(exc, RateLimitError):
+            # OpenAI returns 429 both for genuine rate limiting and for an
+            # exhausted credit balance. They need opposite advice: one says wait,
+            # the other says add credit, and telling a user to wait for the
+            # second is why this looked like an intermittent fault.
+            code = ""
+            body = getattr(exc, "body", None)
+            if isinstance(body, dict) and isinstance(body.get("error"), dict):
+                code = str(body["error"].get("code") or body["error"].get("type") or "")
+            if "quota" in code or "credit" in code or "quota" in detail.lower():
+                return STTUnavailableError(
+                    "The OpenAI account has no credits remaining, so audio cannot "
+                    "be transcribed. Add credits, or use the text input instead.",
+                    kind="quota",
+                    detail=detail,
+                )
+            return STTUnavailableError(
+                "OpenAI rate limit reached. Please try again in a moment.",
+                kind="rate_limit",
+                detail=detail,
+            )
+
+        if isinstance(exc, APIConnectionError):
+            return STTUnavailableError(
+                "Could not reach OpenAI. Check your network connection.",
+                kind="connection",
+                detail=detail,
+            )
+
+        return STTUnavailableError(
+            f"Transcription failed: {detail}", kind="api", detail=detail
+        )
 
     # ---- Transcription ---------------------------------------------------- #
     def transcribe_audio(
@@ -139,7 +196,12 @@ class STTService:
                 **({"language": language} if language else {}),
             )
         except (AuthenticationError, RateLimitError, APIConnectionError, APIError) as exc:
-            logger.exception("Whisper transcription failed")
+            logger.error(
+                "Whisper transcription failed (%s): %s",
+                type(exc).__name__,
+                self._openai_message(exc),
+                exc_info=True,
+            )
             raise self._wrap_api_error(exc) from exc
 
         return self.clean_transcript(result if isinstance(result, str) else getattr(result, "text", ""))
@@ -157,7 +219,12 @@ class STTService:
                 **({"language": language} if language else {}),
             )
         except (AuthenticationError, RateLimitError, APIConnectionError, APIError) as exc:
-            logger.exception("Whisper transcription failed")
+            logger.error(
+                "Whisper transcription failed (%s): %s",
+                type(exc).__name__,
+                self._openai_message(exc),
+                exc_info=True,
+            )
             raise self._wrap_api_error(exc) from exc
         except asyncio.CancelledError:
             # The candidate navigated away mid-request; not an error worth logging.

@@ -103,7 +103,14 @@ app.add_middleware(
     allow_headers=["*"],
     # Content-Disposition is not a CORS-safelisted response header, so without
     # this the browser hides it and the PDF download loses its filename.
-    expose_headers=["Content-Disposition", "Content-Length", "X-Total-Count"],
+    expose_headers=[
+        "Content-Disposition",
+        "Content-Length",
+        "X-Total-Count",
+        # Lets the client tell a quota failure from a transient one without
+        # parsing the message text.
+        "X-Error-Kind",
+    ],
 )
 
 
