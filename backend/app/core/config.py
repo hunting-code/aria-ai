@@ -19,6 +19,7 @@ ENV_FILE = BACKEND_DIR / ".env"
 
 PLACEHOLDER_SECRET = "your-secret-key-here-change-in-production"
 PLACEHOLDER_OPENAI_KEY = "your-openai-key-here"
+PLACEHOLDER_GEMINI_KEY = "your-gemini-key-here"
 
 
 class Settings(BaseSettings):
@@ -47,10 +48,17 @@ class Settings(BaseSettings):
     ALGORITHM: str = "HS256"
     ACCESS_TOKEN_EXPIRE_MINUTES: int = Field(default=1440, ge=1)
 
-    # ---- OpenAI ----
-    OPENAI_API_KEY: str
-    OPENAI_MODEL: str = "gpt-4o-mini"
-    WHISPER_MODEL: str = "whisper-1"
+    # ---- Gemini ----
+    # Google Gemini serves both roles: text generation for feedback and
+    # scoring, and audio transcription. There is no separate speech model.
+    GEMINI_API_KEY: str
+    GEMINI_MODEL: str = "gemini-2.0-flash"
+    GEMINI_AUDIO_MODEL: str = "gemini-2.0-flash"
+
+    # Retained so an existing .env does not fail validation; unused.
+    OPENAI_API_KEY: str = ""
+    OPENAI_MODEL: str = ""
+    WHISPER_MODEL: str = ""
 
     # ---- Application ----
     PROJECT_NAME: str = "ARIA AI"
@@ -112,8 +120,8 @@ class Settings(BaseSettings):
             )
         elif len(self.SECRET_KEY) < 32:
             problems.append("SECRET_KEY is shorter than 32 characters")
-        if self.OPENAI_API_KEY == PLACEHOLDER_OPENAI_KEY:
-            problems.append("OPENAI_API_KEY is still the .env.example placeholder")
+        if self.GEMINI_API_KEY in (PLACEHOLDER_GEMINI_KEY, ""):
+            problems.append("GEMINI_API_KEY is missing or still the .env.example placeholder")
         if self.DEBUG and self.is_production:
             problems.append("DEBUG must be false in production")
         if "*" in self.cors_origins_list and self.is_production:

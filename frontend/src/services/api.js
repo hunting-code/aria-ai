@@ -283,7 +283,7 @@ export const interviewApi = {
    * lets the browser write `multipart/form-data; boundary=...` itself. Setting
    * it manually would omit the boundary and the server could not parse it.
    */
-  transcribe: ({ blob, durationSeconds, filename = 'answer.webm', signal }) => {
+  transcribe: ({ blob, durationSeconds, filename = 'answer.wav', signal }) => {
     const form = new FormData()
     form.append('file', blob, filename)
     if (durationSeconds != null) form.append('duration_seconds', String(durationSeconds))

@@ -45,7 +45,7 @@ It is built for students and early-career candidates who want unlimited, honest 
 | **Pydantic 2 + pydantic-settings** | Request/response validation and typed environment config |
 | **python-jose** | Creates and verifies the JWT access tokens |
 | **passlib + bcrypt** | Hashes passwords (bcrypt pinned below 5.x — see Common Errors) |
-| **OpenAI SDK** | Chat Completions for feedback and scoring; Whisper for transcription |
+| **google-genai** | Google Gemini: feedback, scoring **and** audio transcription in one API |
 | **WebSockets** | Streams the interview: questions out, transcript in, feedback token by token |
 | **fpdf2** | Server-side PDF report generation (the fallback for the browser export) |
 | **slowapi** | Rate limiting per user and per IP |
@@ -328,17 +328,21 @@ SECRET_KEY=3f8a1c...your-generated-value...9e2b
 
 > The app **refuses to start in production** while this is still the placeholder value.
 
-**`OPENAI_API_KEY`** — powers the AI feedback, scoring and transcription.
+**`GEMINI_API_KEY`** — powers the AI feedback, scoring and transcription.
 
-1. Go to **https://platform.openai.com/api-keys**
-2. Sign in (or create an account)
-3. Click **"Create new secret key"**, name it `aria-ai`, and click Create
-4. Copy the key immediately — it is shown only once
-5. Paste it into `.env`:
+1. Go to **https://aistudio.google.com/apikey**
+2. Sign in with a Google account
+3. Click **"Create API key"** and pick a project
+4. Copy the key and paste it into `.env`:
 
 ```
-OPENAI_API_KEY=sk-proj-...your-key...
+GEMINI_API_KEY=AIza...your-key...
 ```
+
+> Create the key in **AI Studio**, not the Cloud Console. AI Studio keys come
+> with free-tier quota; a Cloud Console key for a project without the
+> Generative Language API enabled authenticates fine but has a quota of zero,
+> and every call fails with `RESOURCE_EXHAUSTED`.
 
 > **You can run ARIA without an OpenAI key.** Questions come from a local bank of 96 questions, and feedback and scoring fall back to a documented heuristic that is always labelled as such in the UI. **Transcription is the one exception** — there is no offline substitute for speech, so the microphone path returns an error and you should use the **"Type instead"** button on the interview screen. Note that using a real key costs money against your OpenAI account.
 
@@ -488,11 +492,11 @@ All of these live in `backend/.env`. The first six are in `.env.example`; the re
 | --- | --- | --- |
 | `DATABASE_URL` | **Required.** PostgreSQL connection string | `postgresql://postgres:password@localhost:5432/aria_ai` |
 | `SECRET_KEY` | **Required.** Signs JWT login tokens. Generate with `secrets.token_hex(32)` | `3f8a1c9d...9e2b` (64 hex chars) |
-| `OPENAI_API_KEY` | **Required for AI features.** From platform.openai.com/api-keys | `sk-proj-abc123...` |
+| `GEMINI_API_KEY` | **Required for AI features.** From aistudio.google.com/apikey | `AIza...` |
 | `ALGORITHM` | JWT signing algorithm | `HS256` |
 | `ACCESS_TOKEN_EXPIRE_MINUTES` | How long a login lasts, in minutes | `1440` (24 hours) |
-| `WHISPER_MODEL` | OpenAI speech-to-text model | `whisper-1` |
-| `OPENAI_MODEL` | Model used for feedback and scoring | `gpt-4o-mini` |
+| `GEMINI_AUDIO_MODEL` | Model used for transcription | `gemini-2.0-flash` |
+| `GEMINI_MODEL` | Model used for feedback and scoring | `gemini-2.0-flash` |
 | `ENVIRONMENT` | `development`, `staging` or `production` | `development` |
 | `DEBUG` | Include exception detail in 500 responses | `false` |
 | `PROJECT_NAME` | Name shown in API docs and logs | `ARIA AI` |

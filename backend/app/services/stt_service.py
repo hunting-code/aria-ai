@@ -1,4 +1,10 @@
-"""Speech-to-text via the OpenAI Whisper API."""
+"""Speech-to-text via Gemini.
+
+Gemini has no dedicated speech endpoint: audio is attached to an ordinary
+generate_content call. It also does not accept WebM, which is what
+MediaRecorder produces by default, so the browser records WAV instead - see
+frontend/src/hooks/useAudio.js.
+"""
 
 from __future__ import annotations
 
@@ -7,43 +13,35 @@ import logging
 import re
 from typing import Final
 
-from openai import (
-    APIConnectionError,
-    APIError,
-    AsyncOpenAI,
-    AuthenticationError,
-    OpenAI,
-    RateLimitError,
-)
-
 from app.core.config import get_settings
-from app.services.llm_service import PLACEHOLDER_KEYS
+from app.services.gemini_client import SUPPORTED_AUDIO_MIME, GeminiError, gemini
 
 logger = logging.getLogger(__name__)
 settings = get_settings()
 
-# Whisper rejects anything larger than 25 MB.
-MAX_AUDIO_BYTES: Final[int] = 25 * 1024 * 1024
+# Inline audio must stay under Gemini's ~20 MB request ceiling. WAV is
+# uncompressed, so this is roughly ten minutes of 16 kHz mono speech.
+MAX_AUDIO_BYTES: Final[int] = 18 * 1024 * 1024
 
-# Extensions the API accepts, mapped from the browser's content type. The
-# filename matters: the API infers the container format from it, so a webm
-# blob sent as "audio.wav" is rejected.
-CONTENT_TYPE_EXTENSIONS: Final[dict[str, str]] = {
-    "audio/webm": "webm",
-    "audio/ogg": "ogg",
-    "audio/mp4": "mp4",
-    "audio/mpeg": "mp3",
-    "audio/mpga": "mp3",
-    "audio/wav": "wav",
-    "audio/x-wav": "wav",
-    "audio/flac": "flac",
+# Normalises what a browser reports to what Gemini names. Anything not in
+# SUPPORTED_AUDIO_MIME is refused before the request is made, with a message
+# that says which formats do work.
+CONTENT_TYPE_ALIASES: Final[dict[str, str]] = {
+    "audio/wave": "audio/wav",
+    "audio/x-wav": "audio/wav",
+    "audio/vnd.wave": "audio/wav",
+    "audio/mp3": "audio/mpeg",
+    "audio/mpga": "audio/mpeg",
+    "audio/x-m4a": "audio/aac",
+    "audio/mp4": "audio/aac",
 }
-DEFAULT_EXTENSION: Final[str] = "webm"
+DEFAULT_AUDIO_MIME: Final[str] = "audio/wav"
 
-# Whisper emits this for silence or unintelligible audio; treating it as a real
-# answer would score an empty recording as a confident one.
-_HALLUCINATED_SILENCE = re.compile(
-    r"^\s*(you|thank you\.?|thanks for watching\.?|\.|,)\s*$", re.IGNORECASE
+# Phrases a model may emit instead of an empty string when it hears nothing.
+# Treating one as a real answer would score silence as a confident reply.
+_NON_SPEECH = re.compile(
+    r"^\s*(you|thank you\.?|thanks for watching\.?|\[?(silence|no speech|inaudible|music)\]?\.?|\.|,)\s*$",
+    re.IGNORECASE,
 )
 
 
@@ -63,52 +61,34 @@ class STTUnavailableError(RuntimeError):
 
 
 class STTService:
-    """Transcribes candidate audio.
-
-    Exposes both a blocking and an async method: the WebSocket path needs the
-    async one to avoid stalling the event loop, while scripts and background
-    jobs can use the blocking call.
-    """
+    """Transcribes candidate audio through Gemini."""
 
     def __init__(self) -> None:
-        self._client: OpenAI | None = None
-        self._async_client: AsyncOpenAI | None = None
-        self.model = settings.WHISPER_MODEL
+        self.model = settings.GEMINI_AUDIO_MODEL
 
     @property
     def is_configured(self) -> bool:
-        key = (settings.OPENAI_API_KEY or "").strip()
-        return key not in PLACEHOLDER_KEYS and len(key) > 20
-
-    @property
-    def client(self) -> OpenAI:
-        if self._client is None:
-            self._client = OpenAI(api_key=settings.OPENAI_API_KEY)
-        return self._client
-
-    @property
-    def async_client(self) -> AsyncOpenAI:
-        if self._async_client is None:
-            self._async_client = AsyncOpenAI(api_key=settings.OPENAI_API_KEY)
-        return self._async_client
+        return gemini.is_configured
 
     # ---- Helpers ---------------------------------------------------------- #
     @staticmethod
-    def filename_for(content_type: str | None) -> str:
-        ext = CONTENT_TYPE_EXTENSIONS.get(
-            (content_type or "").split(";")[0].strip().lower(), DEFAULT_EXTENSION
-        )
-        return f"audio.{ext}"
+    def normalise_mime(content_type: str | None) -> str:
+        """Map a browser content type onto one Gemini names."""
+        raw = (content_type or "").split(";")[0].strip().lower()
+        if not raw:
+            return DEFAULT_AUDIO_MIME
+        return CONTENT_TYPE_ALIASES.get(raw, raw)
 
     @staticmethod
     def clean_transcript(text: str) -> str:
-        """Normalise whitespace and drop Whisper's silence artefacts."""
+        """Normalise whitespace and drop non-speech artefacts."""
         cleaned = re.sub(r"\s+", " ", (text or "")).strip()
-        if not cleaned or _HALLUCINATED_SILENCE.match(cleaned):
+        # Models sometimes narrate silence rather than returning nothing.
+        if not cleaned or _NON_SPEECH.match(cleaned):
             return ""
         return cleaned
 
-    def _validate(self, audio_bytes: bytes) -> None:
+    def _validate(self, audio_bytes: bytes, mime_type: str) -> None:
         if not audio_bytes:
             raise STTUnavailableError("The recording was empty.", kind="empty")
         if len(audio_bytes) > MAX_AUDIO_BYTES:
@@ -117,120 +97,43 @@ class STTService:
                 f"the limit is {MAX_AUDIO_BYTES // 1_048_576} MB.",
                 kind="too_large",
             )
-        if not self.is_configured:
-            # No offline fallback exists for speech: silently returning "" would
-            # look to the candidate like their answer was not heard.
+        if mime_type not in SUPPORTED_AUDIO_MIME:
             raise STTUnavailableError(
-                "Speech-to-text is not configured. Set OPENAI_API_KEY in "
+                f"Audio format {mime_type!r} is not supported. Gemini accepts "
+                "WAV, MP3, OGG, AAC and FLAC.",
+                kind="bad_format",
+                detail=mime_type,
+            )
+        if not self.is_configured:
+            # Silently returning "" would look to the candidate like their
+            # answer was not heard, so this is an error, not an empty result.
+            raise STTUnavailableError(
+                "Speech-to-text is not configured. Set GEMINI_API_KEY in "
                 "backend/.env and restart the server - settings are read once at "
                 "startup, so a key added afterwards is not picked up.",
                 kind="not_configured",
             )
 
-    @staticmethod
-    def _openai_message(exc: Exception) -> str:
-        """The provider's own message, when it exposes one."""
-        body = getattr(exc, "body", None)
-        if isinstance(body, dict):
-            error = body.get("error")
-            if isinstance(error, dict) and error.get("message"):
-                return str(error["message"])
-        return str(exc)
-
-    @classmethod
-    def _wrap_api_error(cls, exc: Exception) -> STTUnavailableError:
-        detail = cls._openai_message(exc)
-
-        if isinstance(exc, AuthenticationError):
-            return STTUnavailableError(
-                "OpenAI API key is invalid or missing.", kind="auth", detail=detail
-            )
-
-        if isinstance(exc, RateLimitError):
-            # OpenAI returns 429 both for genuine rate limiting and for an
-            # exhausted credit balance. They need opposite advice: one says wait,
-            # the other says add credit, and telling a user to wait for the
-            # second is why this looked like an intermittent fault.
-            code = ""
-            body = getattr(exc, "body", None)
-            if isinstance(body, dict) and isinstance(body.get("error"), dict):
-                code = str(body["error"].get("code") or body["error"].get("type") or "")
-            if "quota" in code or "credit" in code or "quota" in detail.lower():
-                return STTUnavailableError(
-                    "The OpenAI account has no credits remaining, so audio cannot "
-                    "be transcribed. Add credits, or use the text input instead.",
-                    kind="quota",
-                    detail=detail,
-                )
-            return STTUnavailableError(
-                "OpenAI rate limit reached. Please try again in a moment.",
-                kind="rate_limit",
-                detail=detail,
-            )
-
-        if isinstance(exc, APIConnectionError):
-            return STTUnavailableError(
-                "Could not reach OpenAI. Check your network connection.",
-                kind="connection",
-                detail=detail,
-            )
-
-        return STTUnavailableError(
-            f"Transcription failed: {detail}", kind="api", detail=detail
-        )
-
     # ---- Transcription ---------------------------------------------------- #
-    def transcribe_audio(
-        self, audio_bytes: bytes, content_type: str | None = None, language: str | None = None
-    ) -> str:
-        """Transcribe audio. Blocking - do not call from the event loop.
-
-        Returns the cleaned transcript, or "" when the audio held no speech.
-        """
-        self._validate(audio_bytes)
-        try:
-            result = self.client.audio.transcriptions.create(
-                model=self.model,
-                file=(self.filename_for(content_type), audio_bytes),
-                response_format="text",
-                **({"language": language} if language else {}),
-            )
-        except (AuthenticationError, RateLimitError, APIConnectionError, APIError) as exc:
-            logger.error(
-                "Whisper transcription failed (%s): %s",
-                type(exc).__name__,
-                self._openai_message(exc),
-                exc_info=True,
-            )
-            raise self._wrap_api_error(exc) from exc
-
-        return self.clean_transcript(result if isinstance(result, str) else getattr(result, "text", ""))
-
     async def transcribe_audio_async(
         self, audio_bytes: bytes, content_type: str | None = None, language: str | None = None
     ) -> str:
-        """Async transcription, for the request and WebSocket paths."""
-        self._validate(audio_bytes)
+        """Transcribe audio. Returns "" when it held no speech."""
+        mime = self.normalise_mime(content_type)
+        self._validate(audio_bytes, mime)
         try:
-            result = await self.async_client.audio.transcriptions.create(
-                model=self.model,
-                file=(self.filename_for(content_type), audio_bytes),
-                response_format="text",
-                **({"language": language} if language else {}),
-            )
-        except (AuthenticationError, RateLimitError, APIConnectionError, APIError) as exc:
-            logger.error(
-                "Whisper transcription failed (%s): %s",
-                type(exc).__name__,
-                self._openai_message(exc),
-                exc_info=True,
-            )
-            raise self._wrap_api_error(exc) from exc
-        except asyncio.CancelledError:
-            # The candidate navigated away mid-request; not an error worth logging.
-            raise
+            text = await gemini.transcribe(audio_bytes, mime, model=self.model)
+        except GeminiError as exc:
+            raise STTUnavailableError(str(exc), kind=exc.kind, detail=exc.detail) from exc
+        return self.clean_transcript(text)
 
-        return self.clean_transcript(result if isinstance(result, str) else getattr(result, "text", ""))
+    def transcribe_audio(
+        self, audio_bytes: bytes, content_type: str | None = None, language: str | None = None
+    ) -> str:
+        """Blocking transcription, for scripts and background jobs."""
+        return asyncio.run(
+            self.transcribe_audio_async(audio_bytes, content_type, language)
+        )
 
 
 stt_service = STTService()
@@ -239,6 +142,7 @@ __all__ = [
     "STTService",
     "STTUnavailableError",
     "MAX_AUDIO_BYTES",
-    "CONTENT_TYPE_EXTENSIONS",
+    "CONTENT_TYPE_ALIASES",
+    "SUPPORTED_AUDIO_MIME",
     "stt_service",
 ]

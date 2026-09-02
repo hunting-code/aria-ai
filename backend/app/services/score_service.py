@@ -13,8 +13,7 @@ import re
 import statistics
 from typing import Any, Final
 
-from openai import APIConnectionError, APIError, AuthenticationError, RateLimitError
-
+from app.services.gemini_client import GeminiError, gemini
 from app.services.llm_service import LLMService, build_system_prompt
 
 logger = logging.getLogger(__name__)
@@ -114,28 +113,18 @@ class ScoreService:
             return self._heuristic_answer_score(text)
 
         try:
-            response = await llm_service.client.chat.completions.create(
-                model=llm_service.model,
-                messages=[
-                    {"role": "system", "content": build_system_prompt(role, difficulty)},
-                    {
-                        "role": "user",
-                        "content": (
-                            f"Question asked:\n{question}\n\n"
-                            f'Candidate\'s answer:\n"""\n{text}\n"""\n\n{self.RUBRIC}'
-                        ),
-                    },
-                ],
-                response_format={"type": "json_object"},
+            data = await gemini.generate_json(
+                system=build_system_prompt(role, difficulty),
+                prompt=(
+                    f"Question asked:\n{question}\n\n"
+                    f'Candidate\'s answer:\n"""\n{text}\n"""\n\n{self.RUBRIC}'
+                ),
                 temperature=0.2,
                 max_tokens=400,
+                model=llm_service.model,
             )
-            data = json.loads(response.choices[0].message.content or "{}")
-        except (AuthenticationError, RateLimitError, APIConnectionError, APIError):
+        except GeminiError:
             logger.exception("Answer scoring failed; falling back to the heuristic")
-            return self._heuristic_answer_score(text)
-        except (json.JSONDecodeError, IndexError, AttributeError):
-            logger.exception("Could not parse the answer score; using the heuristic")
             return self._heuristic_answer_score(text)
 
         axes = {
@@ -386,32 +375,19 @@ class ScoreService:
         )
 
         try:
-            response = await llm_service.client.chat.completions.create(
-                model=llm_service.model,
-                messages=[
-                    {
-                        "role": "system",
-                        "content": build_system_prompt(session.job_role, session.difficulty),
-                    },
-                    {
-                        "role": "user",
-                        "content": (
-                            f"Role: {session.job_role}. Difficulty: {session.difficulty}.\n"
-                            f"Overall score: {scores['overall_score']}.\n\n"
-                            f"{transcript_digest}\n\n{instruction}"
-                        ),
-                    },
-                ],
-                response_format={"type": "json_object"},
+            data = await gemini.generate_json(
+                system=build_system_prompt(session.job_role, session.difficulty),
+                prompt=(
+                    f"Role: {session.job_role}. Difficulty: {session.difficulty}.\n"
+                    f"Overall score: {scores['overall_score']}.\n\n"
+                    f"{transcript_digest}\n\n{instruction}"
+                ),
                 temperature=0.4,
                 max_tokens=900,
+                model=llm_service.model,
             )
-            data = json.loads(response.choices[0].message.content or "{}")
-        except (AuthenticationError, RateLimitError, APIConnectionError, APIError):
+        except GeminiError:
             logger.exception("Final feedback generation failed; using the offline summary")
-            return self._offline_final_feedback(scores, answers)
-        except (json.JSONDecodeError, IndexError, AttributeError):
-            logger.exception("Could not parse the final feedback; using the offline summary")
             return self._offline_final_feedback(scores, answers)
 
         def string_list(key: str, limit: int) -> list[str]:

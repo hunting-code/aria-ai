@@ -36,6 +36,9 @@ router = APIRouter(prefix="/interview", tags=["interview"])
 # Which HTTP status each failure deserves. Retrying only helps for the last two.
 STT_ERROR_STATUS = {
     "auth": status.HTTP_401_UNAUTHORIZED,
+    "bad_format": status.HTTP_415_UNSUPPORTED_MEDIA_TYPE,
+    "bad_request": status.HTTP_400_BAD_REQUEST,
+    "server": status.HTTP_503_SERVICE_UNAVAILABLE,
     "not_configured": status.HTTP_503_SERVICE_UNAVAILABLE,
     "quota": status.HTTP_429_TOO_MANY_REQUESTS,
     "rate_limit": status.HTTP_429_TOO_MANY_REQUESTS,
@@ -53,52 +56,40 @@ STT_ERROR_STATUS = {
 async def interview_health() -> dict:
     """Report whether speech-to-text can actually run.
 
-    Deliberately unauthenticated and cheap: it lists models rather than
-    transcribing, so it verifies the key and connectivity without spending
-    credit. Note that a working key with an empty balance still lists models
-    fine - `credits` below is what tells you transcription will really work.
+    Unauthenticated, so it can be opened in a browser while debugging. It
+    transcribes one second of silence rather than merely listing models,
+    because a key can authenticate and still have no quota - and only a real
+    call reveals that.
     """
     if not stt_service.is_configured:
         return {
-            "openai": "not_configured",
-            "whisper": "unavailable",
-            "detail": "OPENAI_API_KEY is missing or still a placeholder. Set it in "
+            "provider": "gemini",
+            "gemini": "not_configured",
+            "transcription": "unavailable",
+            "detail": "GEMINI_API_KEY is missing or still a placeholder. Set it in "
             "backend/.env and restart the server.",
         }
 
-    try:
-        models = await stt_service.async_client.models.list()
-        ids = {m.id for m in models.data}
-    except Exception as exc:  # noqa: BLE001 - the point is to report any failure
-        logger.error("OpenAI reachability check failed: %s", exc, exc_info=True)
-        return {
-            "openai": "unreachable",
-            "whisper": "unavailable",
-            "detail": stt_service._openai_message(exc)[:300],
-        }
-
-    whisper_ok = stt_service.model in ids
-
-    # Listing models costs nothing and succeeds even with a zero balance, so it
-    # cannot tell us transcription will work. Probe that separately.
-    credits = "unknown"
-    detail = ""
+    # One real call is the only honest check: a key can authenticate and still
+    # have zero quota, in which case nothing will actually run.
     try:
         await stt_service.transcribe_audio_async(_SILENT_WAV, content_type="audio/wav")
-        credits = "available"
+        return {
+            "provider": "gemini",
+            "gemini": "connected",
+            "transcription": "available",
+            "model": stt_service.model,
+        }
     except STTUnavailableError as exc:
-        credits = "exhausted" if exc.kind == "quota" else "available"
-        if exc.kind != "quota":
-            credits = "unknown"
-        detail = str(exc)
-
-    return {
-        "openai": "connected",
-        "whisper": "available" if whisper_ok else "unavailable",
-        "model": stt_service.model,
-        "credits": credits,
-        **({"detail": detail} if detail else {}),
-    }
+        reachable = exc.kind not in {"auth", "not_configured"}
+        return {
+            "provider": "gemini",
+            "gemini": "connected" if reachable else "unauthorised",
+            "transcription": "unavailable",
+            "model": stt_service.model,
+            "reason": exc.kind,
+            "detail": str(exc),
+        }
 
 # TODO: question flow endpoints (the live interview runs over /ws/{session_id}).
 
