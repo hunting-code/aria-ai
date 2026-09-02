@@ -13,14 +13,21 @@ import re
 from collections.abc import AsyncGenerator
 from typing import Any, Final
 
+from openai import (
+    APIConnectionError,
+    APIError,
+    AsyncOpenAI,
+    AuthenticationError,
+    RateLimitError,
+)
+
 from app.core.config import get_settings
-from app.services.gemini_client import GeminiError, gemini
 
 logger = logging.getLogger(__name__)
 settings = get_settings()
 
 PLACEHOLDER_KEYS: Final[frozenset[str]] = frozenset(
-    {"", "your-gemini-key-here", "your-api-key-here", "changeme", "test"}
+    {"", "sk-replace-me", "your-openai-key-here", "sk-test", "changeme"}
 )
 
 
@@ -478,7 +485,7 @@ def _clamp(value: Any, low: float = 0.0, high: float = 100.0, default: float = 0
 
 
 class LLMService:
-    """Wraps the Gemini client for interview feedback and scoring.
+    """Wraps the OpenAI client for interview feedback and scoring.
 
     When no usable API key is configured the service runs in *offline mode*:
     questions still come from the bank, and feedback/scores fall back to a
@@ -488,17 +495,21 @@ class LLMService:
     """
 
     def __init__(self) -> None:
-        self.model = settings.GEMINI_MODEL
+        self._client: AsyncOpenAI | None = None
+        self.model = settings.OPENAI_MODEL
 
     @property
     def is_configured(self) -> bool:
         """True when a real-looking API key is present."""
-        return gemini.is_configured
+        key = (settings.OPENAI_API_KEY or "").strip()
+        return key not in PLACEHOLDER_KEYS and len(key) > 20
 
     @property
-    def client(self):
-        """The shared Gemini wrapper. Kept so callers have one seam to mock."""
-        return gemini
+    def client(self) -> AsyncOpenAI:
+        # Built on first use, not at import: settings are read once at startup.
+        if self._client is None:
+            self._client = AsyncOpenAI(api_key=settings.OPENAI_API_KEY)
+        return self._client
 
     # ---- Questions ------------------------------------------------------- #
     async def get_first_question(self, role: str, difficulty: str) -> str:
@@ -535,18 +546,40 @@ class LLMService:
                 yield chunk
             return
 
+        messages = [
+            {"role": "system", "content": build_system_prompt(role, difficulty, mode)},
+            *conversation_history,
+            {"role": "user", "content": user_turn},
+        ]
+
         try:
-            async for token in gemini.stream_text(
-                system=build_system_prompt(role, difficulty, mode),
-                prompt=user_turn,
-                history=conversation_history,
+            stream = await self.client.chat.completions.create(
+                model=self.model,
+                messages=messages,
+                stream=True,
                 temperature=0.7,
                 max_tokens=300,
-                model=self.model,
-            ):
-                yield token
-        except GeminiError as exc:
-            raise LLMUnavailableError(str(exc)) from exc
+            )
+            async for chunk in stream:
+                if not chunk.choices:
+                    continue
+                token = chunk.choices[0].delta.content
+                if token:
+                    yield token
+        except AuthenticationError as exc:
+            logger.error("OpenAI rejected the API key: %s", exc)
+            raise LLMUnavailableError(
+                "The interview model is not configured correctly."
+            ) from exc
+        except RateLimitError as exc:
+            logger.warning("OpenAI rate limit or quota hit: %s", exc)
+            raise LLMUnavailableError(
+                "The interview model is unavailable - the OpenAI account may be "
+                "rate limited or out of credits."
+            ) from exc
+        except (APIConnectionError, APIError) as exc:
+            logger.exception("OpenAI request failed")
+            raise LLMUnavailableError("The interview model is unavailable.") from exc
 
     async def generate_follow_up(
         self,
@@ -567,23 +600,25 @@ class LLMService:
                 "specific example, including what you actually did and what it changed?"
             )
         try:
-            chunks = [
-                token
-                async for token in gemini.stream_text(
-                    system=build_system_prompt(role, difficulty, mode),
-                    prompt=(
-                        f"Question asked:\n{question}\n\n"
-                        f'Candidate\'s answer:\n"""\n{transcript.strip() or "(silence)"}\n"""\n\n'
-                        f"{FOLLOW_UP_INSTRUCTION}"
-                    ),
-                    temperature=0.5,
-                    max_tokens=90,
-                    model=self.model,
-                )
-            ]
-            text = "".join(chunks).strip()
+            response = await self.client.chat.completions.create(
+                model=self.model,
+                messages=[
+                    {"role": "system", "content": build_system_prompt(role, difficulty, mode)},
+                    {
+                        "role": "user",
+                        "content": (
+                            f"Question asked:\n{question}\n\n"
+                            f'Candidate\'s answer:\n"""\n{transcript.strip() or "(silence)"}\n"""\n\n'
+                            f"{FOLLOW_UP_INSTRUCTION}"
+                        ),
+                    },
+                ],
+                temperature=0.5,
+                max_tokens=90,
+            )
+            text = (response.choices[0].message.content or "").strip()
             return text or "Can you expand on that with a specific example?"
-        except GeminiError:
+        except (AuthenticationError, RateLimitError, APIConnectionError, APIError):
             logger.exception("Follow-up generation failed; using the generic prompt")
             return "Can you expand on that with a specific example and the outcome?"
 

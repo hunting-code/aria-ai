@@ -1,26 +1,38 @@
 // Microphone capture with rolling partial transcription.
 //
-// Audio is captured as raw PCM through the Web Audio API and encoded to WAV
-// here, rather than recorded with MediaRecorder. Two reasons:
-//
-//   1. Chrome's MediaRecorder only produces WebM/Opus, and Gemini does not
-//      accept WebM audio at all.
-//   2. Every partial upload is then a complete, self-contained WAV. With
-//      MediaRecorder only the first chunk carries the container header, so
-//      later fragments are not valid audio on their own.
+// A note on chunking: MediaRecorder writes the container header into the FIRST
+// blob only. Chunks 2..n are continuation fragments and are NOT valid audio
+// files on their own - uploading one alone makes Whisper reject it. So every
+// interval we upload the accumulated blob (header + everything so far) and
+// REPLACE the live transcript with the result, rather than uploading the latest
+// fragment and appending. Same visible behaviour, but the audio is always valid.
 
 import { useCallback, useEffect, useRef, useState } from 'react'
 
 import { interviewApi, extractErrorMessage } from '../services/api'
 import { detectFillers } from '../utils/fillerDetector'
-import { TARGET_SAMPLE_RATE, chunksToWav } from '../utils/wavEncoder'
 import useToast from '../store/toastStore'
 
-/** How often a partial transcript is requested while recording. */
-const PARTIAL_INTERVAL_MS = 4000
+const CHUNK_MS = 3000
 
-/** Buffer size for the capture node. 4096 frames is ~85ms at 48kHz. */
-const CAPTURE_BUFFER = 4096
+// Preference order: Opus in WebM is the best supported; Safari needs mp4.
+const MIME_CANDIDATES = [
+  'audio/webm;codecs=opus',
+  'audio/webm',
+  'audio/mp4',
+  'audio/ogg;codecs=opus',
+]
+
+function pickMimeType() {
+  if (typeof MediaRecorder === 'undefined') return null
+  return MIME_CANDIDATES.find((t) => MediaRecorder.isTypeSupported?.(t)) ?? null
+}
+
+const extensionFor = (mimeType = '') => {
+  if (mimeType.includes('mp4')) return 'mp4'
+  if (mimeType.includes('ogg')) return 'ogg'
+  return 'webm'
+}
 
 /**
  * Records an answer and keeps a live transcript updated while the candidate
@@ -30,7 +42,7 @@ const CAPTURE_BUFFER = 4096
  *   isRecording: boolean, startRecording: Function, stopRecording: Function,
  *   audioBlob: Blob|null, transcript: string, isTranscribing: boolean,
  *   liveTranscript: string, fillerData: object, durationSeconds: number,
- *   error: string|null, isSupported: boolean, reset: Function, getLevel: Function
+ *   error: string|null, isSupported: boolean, reset: Function
  * }}
  */
 export default function useAudio({ onPartial, onFinal } = {}) {
@@ -42,30 +54,23 @@ export default function useAudio({ onPartial, onFinal } = {}) {
   const [durationSeconds, setDurationSeconds] = useState(0)
   const [error, setError] = useState(null)
 
-  // ---- Capture graph ---------------------------------------------------- //
+  const recorderRef = useRef(null)
   const streamRef = useRef(null)
-  const audioCtxRef = useRef(null)
-  const sourceRef = useRef(null)
-  const processorRef = useRef(null)
-  const analyserRef = useRef(null)
-  const silentGainRef = useRef(null)
-
-  // Raw Float32 windows, in capture order.
-  const pcmRef = useRef([])
-  const sampleRateRef = useRef(TARGET_SAMPLE_RATE)
-
+  const chunksRef = useRef([])
   const startedAtRef = useRef(0)
   const tickRef = useRef(null)
-  const partialRef = useRef(null)
   const inFlightRef = useRef(false)
-  const abortRef = useRef(null)
-  // One warning per recording: a long answer uploads many times and each
-  // failure would otherwise raise its own toast.
+  // One warning per recording: a 60-second answer uploads ~19 times and each
+  // one would otherwise raise its own toast.
   const warnedRef = useRef(false)
-  // Live input level (0..1), read by the waveform through getLevel(). A ref
-  // rather than state: the meter repaints at 60fps and re-rendering the whole
-  // interview screen that often would be wasteful.
+  const abortRef = useRef(null)
+  const mimeRef = useRef(null)
+  // Live input level (0..1), read by the waveform through getLevel(). Kept in a
+  // ref rather than state: the meter repaints at 60fps and re-rendering the
+  // whole interview screen that often would be wasteful.
   const levelRef = useRef(0)
+  const audioCtxRef = useRef(null)
+  const analyserRef = useRef(null)
   const rafRef = useRef(null)
   // Guards against setting state after unmount mid-upload.
   const aliveRef = useRef(true)
@@ -73,38 +78,26 @@ export default function useAudio({ onPartial, onFinal } = {}) {
   const isSupported =
     typeof navigator !== 'undefined' &&
     Boolean(navigator.mediaDevices?.getUserMedia) &&
-    typeof (window.AudioContext || window.webkitAudioContext) !== 'undefined'
+    typeof MediaRecorder !== 'undefined'
 
-  /** Tear down the capture graph and release the microphone. */
+  /** Stop tracks and clear timers. Safe to call repeatedly. */
   const teardown = useCallback(() => {
     if (tickRef.current) {
       clearInterval(tickRef.current)
       tickRef.current = null
     }
-    if (partialRef.current) {
-      clearInterval(partialRef.current)
-      partialRef.current = null
-    }
     if (rafRef.current) {
       cancelAnimationFrame(rafRef.current)
       rafRef.current = null
     }
-
-    processorRef.current?.disconnect()
-    sourceRef.current?.disconnect()
-    silentGainRef.current?.disconnect()
-    analyserRef.current?.disconnect?.()
-    processorRef.current = null
-    sourceRef.current = null
-    silentGainRef.current = null
     analyserRef.current = null
-
+    // close() returns a promise; a failure here is not actionable.
     audioCtxRef.current?.close?.().catch(() => {})
     audioCtxRef.current = null
-
     levelRef.current = 0
     streamRef.current?.getTracks().forEach((t) => t.stop())
     streamRef.current = null
+    recorderRef.current = null
   }, [])
 
   useEffect(() => {
@@ -119,16 +112,15 @@ export default function useAudio({ onPartial, onFinal } = {}) {
   /** Upload everything recorded so far and refresh the live transcript. */
   const transcribeSoFar = useCallback(
     async ({ final = false } = {}) => {
-      if (!pcmRef.current.length) return null
-      // One request at a time: a slow upload would otherwise queue behind
-      // itself as the interval keeps firing.
+      if (!chunksRef.current.length) return null
+      // One request at a time: chunks arrive every 3s and a slow upload would
+      // otherwise queue up behind itself.
       if (inFlightRef.current && !final) return null
 
       inFlightRef.current = true
       abortRef.current = new AbortController()
-
-      // Encoded fresh each time, so the upload is always a complete WAV.
-      const blob = chunksToWav(pcmRef.current, sampleRateRef.current)
+      const mimeType = mimeRef.current || 'audio/webm'
+      const blob = new Blob(chunksRef.current, { type: mimeType })
       const elapsed = (Date.now() - startedAtRef.current) / 1000
 
       if (final) setIsTranscribing(true)
@@ -137,13 +129,12 @@ export default function useAudio({ onPartial, onFinal } = {}) {
         const data = await interviewApi.transcribe({
           blob,
           durationSeconds: Number(elapsed.toFixed(2)),
-          filename: 'answer.wav',
+          filename: `answer.${extensionFor(mimeType)}`,
           signal: abortRef.current.signal,
         })
         if (!aliveRef.current) return null
 
-        // Replace rather than append: each upload transcribes the whole answer
-        // so far, so appending would duplicate everything already said.
+        // Replace, never append - see the note at the top of the file.
         setLiveTranscript(data.transcript || '')
         if (final) setTranscript(data.transcript || '')
         setError(null)
@@ -154,7 +145,8 @@ export default function useAudio({ onPartial, onFinal } = {}) {
         if (!aliveRef.current) return null
 
         // Transcription failing must never stop the recording: the audio is
-        // still being captured and the candidate can still type.
+        // still being captured and the candidate can still type. Warn once and
+        // carry on.
         const message = extractErrorMessage(err, 'Could not transcribe your answer.')
         console.warn('Transcription failed:', err?.response?.status, message)
 
@@ -193,7 +185,6 @@ export default function useAudio({ onPartial, onFinal } = {}) {
           echoCancellation: true,
           noiseSuppression: true,
           autoGainControl: true,
-          channelCount: 1,
         },
       })
     } catch (err) {
@@ -209,53 +200,21 @@ export default function useAudio({ onPartial, onFinal } = {}) {
       return false
     }
 
-    const Ctx = window.AudioContext || window.webkitAudioContext
-    let ctx
+    const mimeType = pickMimeType()
+    mimeRef.current = mimeType || 'audio/webm'
+
+    let recorder
     try {
-      ctx = new Ctx()
-      // Autoplay policies can start the context suspended; without this no
-      // audio callbacks fire and the recording is silently empty.
-      if (ctx.state === 'suspended') await ctx.resume()
+      recorder = new MediaRecorder(stream, mimeType ? { mimeType } : undefined)
     } catch {
       stream.getTracks().forEach((t) => t.stop())
-      setError('Could not start the audio engine.')
+      setError('This browser cannot record in a supported audio format.')
       return false
     }
 
-    const source = ctx.createMediaStreamSource(stream)
-    const analyser = ctx.createAnalyser()
-    analyser.fftSize = 1024
-    analyser.smoothingTimeConstant = 0.7
-
-    // ScriptProcessorNode is deprecated in favour of AudioWorklet, but it needs
-    // no separate module file and is supported everywhere this app runs. The
-    // callback only copies samples, so the main-thread cost is negligible.
-    const processor = ctx.createScriptProcessor(CAPTURE_BUFFER, 1, 1)
-    // A processor must be connected to the destination to receive callbacks,
-    // but routing the microphone to the speakers would cause feedback - so it
-    // goes through a muted gain node.
-    const silent = ctx.createGain()
-    silent.gain.value = 0
-
-    pcmRef.current = []
-    sampleRateRef.current = ctx.sampleRate
-
-    processor.onaudioprocess = (event) => {
-      // The event buffer is reused between callbacks, so this must be a copy.
-      pcmRef.current.push(new Float32Array(event.inputBuffer.getChannelData(0)))
-    }
-
-    source.connect(analyser)
-    source.connect(processor)
-    processor.connect(silent)
-    silent.connect(ctx.destination)
-
-    audioCtxRef.current = ctx
-    sourceRef.current = source
-    analyserRef.current = analyser
-    processorRef.current = processor
-    silentGainRef.current = silent
+    chunksRef.current = []
     streamRef.current = stream
+    recorderRef.current = recorder
     startedAtRef.current = Date.now()
     warnedRef.current = false
 
@@ -263,52 +222,89 @@ export default function useAudio({ onPartial, onFinal } = {}) {
     setTranscript('')
     setLiveTranscript('')
     setDurationSeconds(0)
-    setIsRecording(true)
 
-    // Level meter: RMS of the time-domain buffer, smoothed so the bars ease
-    // rather than strobe.
-    const buffer = new Uint8Array(analyser.fftSize)
-    const sample = () => {
-      const node = analyserRef.current
-      if (!node) return
-      node.getByteTimeDomainData(buffer)
-      let sum = 0
-      for (let i = 0; i < buffer.length; i += 1) {
-        const v = (buffer[i] - 128) / 128
-        sum += v * v
+    recorder.ondataavailable = (event) => {
+      if (event.data && event.data.size > 0) {
+        chunksRef.current.push(event.data)
+        // Skip the first interval: 3s of audio rarely yields a useful partial
+        // and it doubles the cost of every short answer.
+        if (chunksRef.current.length > 1) transcribeSoFar()
       }
-      const next = Math.min(1, Math.sqrt(sum / buffer.length) * 3.2)
-      levelRef.current = levelRef.current * 0.6 + next * 0.4
-      rafRef.current = requestAnimationFrame(sample)
     }
-    rafRef.current = requestAnimationFrame(sample)
+
+    recorder.onerror = () => {
+      setError('Recording stopped unexpectedly.')
+      setIsRecording(false)
+      teardown()
+    }
+
+    // Web Audio meter: RMS of the time-domain buffer, smoothed so the bars
+    // ease rather than strobe. Failure here must not stop the recording.
+    try {
+      const Ctx = window.AudioContext || window.webkitAudioContext
+      if (Ctx) {
+        const ctx = new Ctx()
+        const source = ctx.createMediaStreamSource(stream)
+        const analyser = ctx.createAnalyser()
+        analyser.fftSize = 1024
+        analyser.smoothingTimeConstant = 0.7
+        source.connect(analyser)
+        audioCtxRef.current = ctx
+        analyserRef.current = analyser
+
+        const buffer = new Uint8Array(analyser.fftSize)
+        const sample = () => {
+          const node = analyserRef.current
+          if (!node) return
+          node.getByteTimeDomainData(buffer)
+          let sum = 0
+          for (let i = 0; i < buffer.length; i += 1) {
+            const v = (buffer[i] - 128) / 128
+            sum += v * v
+          }
+          const rms = Math.sqrt(sum / buffer.length)
+          // Scale up: conversational speech sits well below full deflection.
+          const next = Math.min(1, rms * 3.2)
+          levelRef.current = levelRef.current * 0.6 + next * 0.4
+          rafRef.current = requestAnimationFrame(sample)
+        }
+        rafRef.current = requestAnimationFrame(sample)
+      }
+    } catch {
+      /* metering is decorative; recording continues without it */
+    }
+
+    recorder.start(CHUNK_MS)
+    setIsRecording(true)
 
     tickRef.current = setInterval(() => {
       setDurationSeconds(Math.round((Date.now() - startedAtRef.current) / 100) / 10)
     }, 200)
 
-    partialRef.current = setInterval(() => {
-      transcribeSoFar()
-    }, PARTIAL_INTERVAL_MS)
-
     return true
-  }, [isSupported, transcribeSoFar])
+  }, [isSupported, teardown, transcribeSoFar])
 
   const stopRecording = useCallback(async () => {
-    if (!audioCtxRef.current) {
+    const recorder = recorderRef.current
+    if (!recorder || recorder.state === 'inactive') {
       setIsRecording(false)
       return null
     }
 
-    const elapsed = (Date.now() - startedAtRef.current) / 1000
-    const rate = sampleRateRef.current
-    const chunks = pcmRef.current
+    // Wait for the recorder to flush its final buffer before uploading.
+    const stopped = new Promise((resolve) => {
+      recorder.onstop = () => resolve()
+    })
+    recorder.stop()
+    await stopped
 
+    const elapsed = (Date.now() - startedAtRef.current) / 1000
     setDurationSeconds(Number(elapsed.toFixed(1)))
     setIsRecording(false)
     teardown()
 
-    const blob = chunks.length ? chunksToWav(chunks, rate) : null
+    const mimeType = mimeRef.current || 'audio/webm'
+    const blob = new Blob(chunksRef.current, { type: mimeType })
     setAudioBlob(blob)
 
     // Cancel any partial still in flight so it cannot land after the final one
@@ -317,8 +313,8 @@ export default function useAudio({ onPartial, onFinal } = {}) {
     inFlightRef.current = false
 
     const data = await transcribeSoFar({ final: true })
-    // The blob is returned either way: if transcription failed, the caller
-    // still has the recording.
+    // The blob is returned either way: if transcription failed, the caller still
+    // has the recording and can decide what to do with it.
     return {
       blob,
       durationSeconds: Number(elapsed.toFixed(2)),
@@ -330,9 +326,8 @@ export default function useAudio({ onPartial, onFinal } = {}) {
   const reset = useCallback(() => {
     abortRef.current?.abort()
     teardown()
-    pcmRef.current = []
+    chunksRef.current = []
     inFlightRef.current = false
-    warnedRef.current = false
     setIsRecording(false)
     setIsTranscribing(false)
     setAudioBlob(null)
@@ -340,6 +335,7 @@ export default function useAudio({ onPartial, onFinal } = {}) {
     setLiveTranscript('')
     setDurationSeconds(0)
     setError(null)
+    warnedRef.current = false
   }, [teardown])
 
   /** Current input level, 0..1. Read inside an animation frame. */

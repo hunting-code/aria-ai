@@ -58,34 +58,34 @@ async def interview_health() -> dict:
 
     Unauthenticated, so it can be opened in a browser while debugging. It
     transcribes one second of silence rather than merely listing models,
-    because a key can authenticate and still have no quota - and only a real
+    because a key can authenticate and still have no credit - and only a real
     call reveals that.
     """
     if not stt_service.is_configured:
         return {
-            "provider": "gemini",
-            "gemini": "not_configured",
-            "transcription": "unavailable",
-            "detail": "GEMINI_API_KEY is missing or still a placeholder. Set it in "
+            "provider": "openai",
+            "openai": "not_configured",
+            "whisper": "unavailable",
+            "detail": "OPENAI_API_KEY is missing or still a placeholder. Set it in "
             "backend/.env and restart the server.",
         }
 
     # One real call is the only honest check: a key can authenticate and still
-    # have zero quota, in which case nothing will actually run.
+    # have no credit, in which case nothing billable will actually run.
     try:
         await stt_service.transcribe_audio_async(_SILENT_WAV, content_type="audio/wav")
         return {
-            "provider": "gemini",
-            "gemini": "connected",
-            "transcription": "available",
+            "provider": "openai",
+            "openai": "connected",
+            "whisper": "available",
             "model": stt_service.model,
         }
     except STTUnavailableError as exc:
         reachable = exc.kind not in {"auth", "not_configured"}
         return {
-            "provider": "gemini",
-            "gemini": "connected" if reachable else "unauthorised",
-            "transcription": "unavailable",
+            "provider": "openai",
+            "openai": "connected" if reachable else "unauthorised",
+            "whisper": "unavailable",
             "model": stt_service.model,
             "reason": exc.kind,
             "detail": str(exc),
