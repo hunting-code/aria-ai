@@ -58,33 +58,34 @@ async def interview_health() -> dict:
 
     Unauthenticated, so it can be opened in a browser while debugging. It
     transcribes one second of silence rather than merely listing models,
-    because a key can authenticate and still have no credit - and only a real
-    call reveals that.
+    because a key can authenticate and still be out of daily quota - and only a
+    real call reveals that.
     """
     if not stt_service.is_configured:
         return {
-            "provider": "openai",
-            "openai": "not_configured",
+            "provider": "groq",
+            "groq_stt": "not_configured",
             "whisper": "unavailable",
-            "detail": "OPENAI_API_KEY is missing or still a placeholder. Set it in "
-            "backend/.env and restart the server.",
+            "detail": "GROQ_API_KEY is missing or still a placeholder. Set it in "
+            "backend/.env and restart the server. Free keys: "
+            "https://console.groq.com/keys",
         }
 
     # One real call is the only honest check: a key can authenticate and still
-    # have no credit, in which case nothing billable will actually run.
+    # be out of daily quota, in which case nothing will actually transcribe.
     try:
         await stt_service.transcribe_audio_async(_SILENT_WAV, content_type="audio/wav")
         return {
-            "provider": "openai",
-            "openai": "connected",
+            "provider": "groq",
+            "groq_stt": "connected",
             "whisper": "available",
             "model": stt_service.model,
         }
     except STTUnavailableError as exc:
         reachable = exc.kind not in {"auth", "not_configured"}
         return {
-            "provider": "openai",
-            "openai": "connected" if reachable else "unauthorised",
+            "provider": "groq",
+            "groq_stt": "connected" if reachable else "unauthorised",
             "whisper": "unavailable",
             "model": stt_service.model,
             "reason": exc.kind,

@@ -19,6 +19,7 @@ ENV_FILE = BACKEND_DIR / ".env"
 
 PLACEHOLDER_SECRET = "your-secret-key-here-change-in-production"
 PLACEHOLDER_OPENAI_KEY = "your-openai-key-here"
+PLACEHOLDER_GROQ_KEY = "your-groq-key-here"
 
 
 class Settings(BaseSettings):
@@ -47,10 +48,18 @@ class Settings(BaseSettings):
     ALGORITHM: str = "HS256"
     ACCESS_TOKEN_EXPIRE_MINUTES: int = Field(default=1440, ge=1)
 
-    # ---- OpenAI ----
+    # ---- OpenAI (feedback and scoring) ----
     OPENAI_API_KEY: str
     OPENAI_MODEL: str = "gpt-4o-mini"
-    WHISPER_MODEL: str = "whisper-1"
+
+    # ---- Groq (speech-to-text) ----
+    # Transcription is split onto Groq because its free tier covers Whisper.
+    # Optional so the app still starts without it - the interview then falls
+    # back to the typed answer path rather than failing outright.
+    GROQ_API_KEY: str = ""
+    # Groq's Whisper model name. Note this is not an OpenAI model id: Groq
+    # serves whisper-large-v3-turbo, and "whisper-1" would be rejected.
+    WHISPER_MODEL: str = "whisper-large-v3-turbo"
 
     # ---- Application ----
     PROJECT_NAME: str = "ARIA AI"
@@ -114,6 +123,10 @@ class Settings(BaseSettings):
             problems.append("SECRET_KEY is shorter than 32 characters")
         if self.OPENAI_API_KEY in (PLACEHOLDER_OPENAI_KEY, ""):
             problems.append("OPENAI_API_KEY is missing or still the .env.example placeholder")
+        if self.GROQ_API_KEY in (PLACEHOLDER_GROQ_KEY, ""):
+            problems.append(
+                "GROQ_API_KEY is missing - speech-to-text will be unavailable"
+            )
         if self.DEBUG and self.is_production:
             problems.append("DEBUG must be false in production")
         if "*" in self.cors_origins_list and self.is_production:

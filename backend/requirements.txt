@@ -15,8 +15,11 @@ passlib==1.7.4
 bcrypt==4.3.0          # pinned <5: passlib 1.7.4 is incompatible with bcrypt 5.x
 python-multipart==0.0.32   # required by FastAPI OAuth2 form login
 
-# --- LLM + speech ---
+# --- LLM (feedback, scoring) ---
 openai==3.6.0
+
+# --- Speech-to-text (Groq free tier) ---
+groq==1.7.0
 
 # --- Rate limiting ---
 slowapi==0.1.10

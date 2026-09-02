@@ -45,7 +45,8 @@ It is built for students and early-career candidates who want unlimited, honest 
 | **Pydantic 2 + pydantic-settings** | Request/response validation and typed environment config |
 | **python-jose** | Creates and verifies the JWT access tokens |
 | **passlib + bcrypt** | Hashes passwords (bcrypt pinned below 5.x — see Common Errors) |
-| **OpenAI SDK** | Chat Completions for feedback and scoring; Whisper for transcription |
+| **OpenAI SDK** | Chat Completions for feedback and scoring |
+| **groq** | Groq-hosted Whisper for speech-to-text (free tier) |
 | **WebSockets** | Streams the interview: questions out, transcript in, feedback token by token |
 | **fpdf2** | Server-side PDF report generation (the fallback for the browser export) |
 | **slowapi** | Rate limiting per user and per IP |
@@ -340,7 +341,9 @@ SECRET_KEY=3f8a1c...your-generated-value...9e2b
 OPENAI_API_KEY=sk-proj-...your-key...
 ```
 
-> A valid key is not enough on its own: the account also needs **credit**.
+> Transcription does **not** use this key - that runs on Groq's free tier.
+> A valid OpenAI key is still not enough on its own for feedback and scoring:
+> the account also needs **credit**.
 > A key with a zero balance authenticates fine, then fails every billable call
 > with `429 insufficient_quota`. Check
 > https://platform.openai.com/settings/organization/billing.
@@ -496,7 +499,8 @@ All of these live in `backend/.env`. The first six are in `.env.example`; the re
 | `OPENAI_API_KEY` | **Required for AI features.** From platform.openai.com/api-keys | `sk-proj-abc123...` |
 | `ALGORITHM` | JWT signing algorithm | `HS256` |
 | `ACCESS_TOKEN_EXPIRE_MINUTES` | How long a login lasts, in minutes | `1440` (24 hours) |
-| `WHISPER_MODEL` | OpenAI speech-to-text model | `whisper-1` |
+| `GROQ_API_KEY` | **Required for transcription.** Free from console.groq.com/keys | `gsk_...` |
+| `WHISPER_MODEL` | Groq speech-to-text model | `whisper-large-v3-turbo` |
 | `OPENAI_MODEL` | Model used for feedback and scoring | `gpt-4o-mini` |
 | `ENVIRONMENT` | `development`, `staging` or `production` | `development` |
 | `DEBUG` | Include exception detail in 500 responses | `false` |
