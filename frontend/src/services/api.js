@@ -6,7 +6,14 @@
 
 import axios from 'axios'
 
-export const API_BASE_URL = import.meta.env.VITE_API_URL ?? 'http://localhost:8000'
+// In dev this is empty on purpose: requests go to the SAME origin the page was
+// served from (localhost:5173) and Vite's proxy forwards /api and /ws to the
+// backend. That removes a whole class of "cannot reach the server" failures -
+// no CORS preflight, no port mismatch, no localhost-resolves-to-::1-first
+// problem, and nothing for a browser's shields to treat as cross-origin.
+// Set VITE_API_URL to override (e.g. a deployed API).
+export const API_BASE_URL =
+  import.meta.env.VITE_API_URL ?? (import.meta.env.DEV ? '' : 'http://localhost:8000')
 export const API_PREFIX = '/api'
 const TOKEN_STORAGE_KEY = 'aria_token'
 const LOGIN_ROUTE = '/login'
@@ -271,6 +278,48 @@ export const resumeApi = {
 /* -------------------------------------------------------------------------- */
 /* Interview sessions                                                         */
 /* -------------------------------------------------------------------------- */
+export const accountApi = {
+  /** PUT /api/auth/profile - name and/or password. */
+  updateProfile: (payload) =>
+    api.put(`${API_PREFIX}/auth/profile`, payload).then((r) => r.data),
+
+  /** DELETE /api/sessions/ - soft-clears the whole history. */
+  clearHistory: () =>
+    api.delete(`${API_PREFIX}/sessions/`).then((r) => {
+      cacheClear('sessions:')
+      return r.data
+    }),
+
+  /** DELETE /api/auth/me - irreversible; requires the password. */
+  deleteAccount: (password) =>
+    api
+      .delete(`${API_PREFIX}/auth/me`, { data: { password } })
+      .then(() => undefined),
+}
+
+export const careerApi = {
+  /** GET /api/career/:id - the seven-section report. Cached; built on first open. */
+  report: (sessionId, { force = false } = {}) =>
+    cached(
+      `career:${sessionId}`,
+      () =>
+        api
+          .get(`${API_PREFIX}/career/${sessionId}`, { timeout: 180000 })
+          .then((r) => r.data),
+      { force },
+    ),
+
+  /** POST /api/career/jd-match - score a pasted job description. */
+  matchJd: ({ job_description, session_id }) =>
+    api
+      .post(
+        `${API_PREFIX}/career/jd-match`,
+        { job_description, ...(session_id ? { session_id } : {}) },
+        { timeout: 120000 },
+      )
+      .then((r) => r.data),
+}
+
 export const sessionsApi = {
   /** GET /api/sessions/my-sessions - the caller's sessions, newest first. */
   mySessions: ({ force = false, ...config } = {}) =>
@@ -281,8 +330,16 @@ export const sessionsApi = {
     ),
 
   /** POST /api/sessions/create - opens a session and returns it. */
-  create: ({ job_role, difficulty }) =>
-    api.post(`${API_PREFIX}/sessions/create`, { job_role, difficulty }).then((r) => {
+  create: ({ job_role, difficulty, session_type, resume_id }) =>
+    api
+      .post(`${API_PREFIX}/sessions/create`, {
+        job_role,
+        difficulty,
+        // Omitted entirely for a practice session so the server default stands.
+        ...(session_type ? { session_type } : {}),
+        ...(resume_id ? { resume_id } : {}),
+      })
+      .then((r) => {
       cacheClear('sessions:')
       return r.data
     }),
@@ -323,9 +380,9 @@ export const sessionsApi = {
    * POST /api/sessions/:id/complete - scores the session and writes its
    * verdict. Idempotent: returns the stored feedback unless regenerate is set.
    */
-  complete: (sessionId, { regenerate = false, signal } = {}) =>
+  complete: (sessionId, { regenerate = false, signal, proctoring = null } = {}) =>
     api
-      .post(`${API_PREFIX}/sessions/${sessionId}/complete`, null, {
+      .post(`${API_PREFIX}/sessions/${sessionId}/complete`, proctoring, {
         params: regenerate ? { regenerate: true } : undefined,
         signal,
         timeout: 90000,

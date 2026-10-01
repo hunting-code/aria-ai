@@ -97,6 +97,49 @@ class UserResponse(ORMModel):
     created_at: datetime
 
 
+class ProfileUpdate(BaseModel):
+    """Edit the profile. Username and email are fixed after registration."""
+
+    full_name: str | None = Field(default=None, max_length=255)
+    # All three are required together to change a password, and omitted
+    # entirely to leave it alone.
+    current_password: str | None = None
+    new_password: str | None = None
+
+    @field_validator("new_password")
+    @classmethod
+    def _check_new_password(cls, value: str | None) -> str | None:
+        if value is None:
+            return value
+        if len(value) < 8:
+            raise ValueError("Password must be at least 8 characters.")
+        if password_too_long(value):
+            raise ValueError(
+                f"Password must be at most {BCRYPT_MAX_BYTES} bytes."
+            )
+        return value
+
+
+class PasswordChange(BaseModel):
+    """Change a password without touching anything else."""
+
+    current_password: str = Field(min_length=1)
+    new_password: str = Field(min_length=8)
+
+    @field_validator("new_password")
+    @classmethod
+    def _check(cls, value: str) -> str:
+        if password_too_long(value):
+            raise ValueError(f"Password must be at most {BCRYPT_MAX_BYTES} bytes.")
+        return value
+
+
+class AccountDeleteRequest(BaseModel):
+    """Deleting an account requires the current password, every time."""
+
+    password: str = Field(min_length=1)
+
+
 class Token(ORMModel):
     """Issued by /auth/register and /auth/login."""
 
@@ -200,12 +243,28 @@ class SessionSummary(ORMModel):
     completed_at: datetime | None = None
 
 
+class ProctoringPayload(BaseModel):
+    """Browser-side proctoring signals, sent when an interview completes."""
+
+    integrity_score: float | None = Field(default=None, ge=0, le=100)
+    tab_switches: int = Field(default=0, ge=0)
+    total_away_ms: float = Field(default=0, ge=0)
+    suspicious_events: int = Field(default=0, ge=0)
+    attention_rate: float | None = Field(default=None, ge=0, le=1)
+    tracking_available: bool = False
+    switches: list[dict] = Field(default_factory=list)
+
+
 class SessionResponse(SessionSummary):
     """A full session, including every score breakdown."""
 
     user_id: uuid.UUID
     final_feedback: dict | None = None
     answers: list["AnswerResponse"] = Field(default_factory=list)
+
+    # ---- Proctoring ----
+    integrity_score: float | None = None
+    proctoring_data: dict | None = None
 
     # ---- AI Meet ----
     # Null on a practice session; populated once a meet has been completed.

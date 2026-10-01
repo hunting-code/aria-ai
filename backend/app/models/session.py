@@ -111,6 +111,13 @@ class InterviewSession(Base):
     # Structured career guidance generated after an AI Meet completes.
     career_guidance: Mapped[dict | None] = mapped_column(JSONDict, nullable=True)
 
+    # ---- Proctoring ----
+    # 0-100 focus signal from the browser (tab switches, gaze). Null when the
+    # candidate's browser could not measure it - absence is not a red flag.
+    integrity_score: Mapped[float | None] = mapped_column(Float, nullable=True)
+    # The raw counts behind that score, so a reader can disagree with it.
+    proctoring_data: Mapped[dict | None] = mapped_column(JSONDict, nullable=True)
+
     # ---- Aggregate scores: null until the interview is scored ----
     overall_score: Mapped[float | None] = mapped_column(Float, nullable=True)
     answer_score: Mapped[float | None] = mapped_column(Float, nullable=True)

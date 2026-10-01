@@ -15,6 +15,11 @@ import { PageSkeleton } from './components/ui/Skeleton'
 // Pages are code-split: the interview screen pulls in recharts and the report
 // pulls in the PDF stack, and nobody should download either to reach /login.
 const Analysis = lazy(() => import('./pages/Analysis'))
+const CareerIndex = lazy(() => import('./pages/CareerIndex'))
+const CareerIntelligence = lazy(() => import('./pages/CareerIntelligence'))
+const AIMeet = lazy(() => import('./pages/AIMeet'))
+const MeetDebrief = lazy(() => import('./pages/MeetDebrief'))
+const MeetLobby = lazy(() => import('./pages/MeetLobby'))
 const Landing = lazy(() => import('./pages/Landing'))
 const ResumeUpload = lazy(() => import('./pages/ResumeUpload'))
 const Sessions = lazy(() => import('./pages/Sessions'))
@@ -90,6 +95,32 @@ export default function App() {
           <Route path="/login" element={<Login />} />
           <Route path="/register" element={<Register />} />
 
+          {/* AI Meet: protected but full-screen, outside the app shell. */}
+          <Route
+            path="/meet/:sessionId/lobby"
+            element={
+              <ProtectedRoute>
+                <MeetLobby />
+              </ProtectedRoute>
+            }
+          />
+          <Route
+            path="/meet/:sessionId"
+            element={
+              <ProtectedRoute>
+                <AIMeet />
+              </ProtectedRoute>
+            }
+          />
+          <Route
+            path="/meet/:sessionId/debrief"
+            element={
+              <ProtectedRoute>
+                <MeetDebrief />
+              </ProtectedRoute>
+            }
+          />
+
           {/* Protected app routes - navbar + sidebar via AppLayout. */}
           <Route
             element={
@@ -102,6 +133,8 @@ export default function App() {
             <Route path="/select-role" element={<RoleSelect />} />
             <Route path="/interview/:sessionId" element={<Interview />} />
             <Route path="/analysis/:sessionId" element={<Analysis />} />
+            <Route path="/career" element={<CareerIndex />} />
+            <Route path="/career/:sessionId" element={<CareerIntelligence />} />
             <Route path="/report/:sessionId" element={<Report />} />
             <Route path="/sessions" element={<Sessions />} />
             <Route path="/resume" element={<ResumeUpload />} />

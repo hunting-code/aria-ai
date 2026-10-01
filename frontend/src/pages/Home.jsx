@@ -28,6 +28,7 @@ import {
   TrendingUp,
   Trophy,
   Users,
+  Compass,
   FileText,
   UploadCloud,
 } from 'lucide-react'
@@ -35,6 +36,7 @@ import {
 import useAuth from '../hooks/useAuth'
 import { resumeApi, sessionsApi, extractErrorMessage } from '../services/api'
 import StreakCard from '../components/dashboard/StreakCard'
+import OnboardingModal, { shouldShowOnboarding } from '../components/onboarding/OnboardingModal'
 import { Badge, Button, Card, ScoreRing, cn } from '../components/ui'
 import { TONE_TEXT, scoreTone } from '../components/ui/scoreColor'
 
@@ -308,6 +310,10 @@ export default function Home() {
   const user = useAuth((s) => s.user)
   const navigate = useNavigate()
 
+  // First-run introduction. Read once on mount: finishing it writes to
+  // localStorage, and re-reading would make the modal close and reopen.
+  const [showOnboarding, setShowOnboarding] = useState(shouldShowOnboarding)
+
   const [sessions, setSessions] = useState([])
   // Named to distinguish it from the client-derived `stats` below.
   const [serverStats, setServerStats] = useState(null)
@@ -355,6 +361,35 @@ export default function Home() {
   const recent = useMemo(() => sessions.slice(0, 5), [sessions])
   const tip = useMemo(() => tipOfTheDay(), [])
 
+  // Latest completed AI Meet, for the career insights card. undefined = loading,
+  // null = the user has not finished one yet.
+  const [careerMeet, setCareerMeet] = useState(undefined)
+  useEffect(() => {
+    let live = true
+    sessionsApi
+      .mySessions()
+      .then(async (data) => {
+        if (!live) return
+        const rows = Array.isArray(data) ? data : (data?.sessions ?? [])
+        const meet = rows.find(
+          (row) => row.session_type === 'ai_meet' && row.status === 'completed',
+        )
+        if (!meet) return setCareerMeet(null)
+        // Only read what is already stored - opening the dashboard must never
+        // trigger a minutes-long report generation.
+        try {
+          const full = await sessionsApi.get(meet.id)
+          live && setCareerMeet({ ...meet, guidance: full?.career_guidance ?? null })
+        } catch {
+          live && setCareerMeet({ ...meet, guidance: null })
+        }
+      })
+      .catch(() => live && setCareerMeet(null))
+    return () => {
+      live = false
+    }
+  }, [])
+
   // Resume analysis summary - null means none uploaded, undefined still loading.
   const [resume, setResume] = useState(undefined)
   useEffect(() => {
@@ -372,6 +407,12 @@ export default function Home() {
 
   return (
     <div className="mx-auto max-w-7xl">
+      <OnboardingModal
+        open={showOnboarding}
+        onClose={() => setShowOnboarding(false)}
+        firstName={(user?.full_name || user?.username || '').split(' ')[0]}
+      />
+
       {/* ---- 1. Welcome header ------------------------------------------- */}
       <header className="mb-8 flex flex-col gap-5 sm:flex-row sm:items-center sm:justify-between">
         <div className="min-w-0">
@@ -649,6 +690,57 @@ export default function Home() {
 
         {/* ---- 5. Tips panel --------------------------------------------- */}
         <aside className="min-w-0 space-y-6" aria-label="Resume and interview tip">
+          {/* ---- Career insights ----------------------------------------- */}
+          {careerMeet ? (
+            <Card padding="md" className="animate-slide-up" style={{ animationDelay: '0.35s' }}>
+              <p className="flex items-center gap-1.5 text-sm font-semibold">
+                <Compass className="h-4 w-4 text-aria-blue" aria-hidden="true" />
+                Career Insights
+              </p>
+              {careerMeet.guidance?.readiness ? (
+                <>
+                  <div className="mt-3 flex items-baseline justify-between gap-2">
+                    <span className="font-display text-2xl font-bold tabular-nums">
+                      {Math.round(careerMeet.guidance.readiness.score)}
+                      <span className="text-sm text-aria-muted">/100</span>
+                    </span>
+                    <span className="rounded-full border border-aria-blue/45 bg-aria-blue/10 px-2 py-0.5 text-[11px] font-semibold capitalize text-aria-blue">
+                      {careerMeet.guidance.readiness.level === 'mid'
+                        ? 'Mid-level'
+                        : careerMeet.guidance.readiness.level}
+                    </span>
+                  </div>
+                  <div className="mt-2 h-1.5 overflow-hidden rounded-full bg-aria-border">
+                    <div
+                      className="h-full rounded-full bg-aria-gradient"
+                      style={{ width: `${careerMeet.guidance.readiness.score}%` }}
+                    />
+                  </div>
+                  {careerMeet.guidance.skill_gaps?.length ? (
+                    <p className="mt-3 text-xs text-aria-muted">
+                      <span className="text-aria-text">Top gap: </span>
+                      {careerMeet.guidance.skill_gaps[0].skill}
+                    </p>
+                  ) : null}
+                </>
+              ) : (
+                <p className="mt-2 text-xs text-aria-muted">
+                  Your AI Meet is scored - open your career report to see where you
+                  stand and what to work on.
+                </p>
+              )}
+              <Button
+                variant="outline"
+                size="sm"
+                fullWidth
+                className="mt-4"
+                onClick={() => navigate(`/career/${careerMeet.id}`)}
+              >
+                View career report
+              </Button>
+            </Card>
+          ) : null}
+
           {/* ---- Resume summary ------------------------------------------ */}
           {resume === undefined ? null : resume ? (
             <Card padding="md" className="animate-slide-up" style={{ animationDelay: '0.4s' }}>

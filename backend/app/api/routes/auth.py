@@ -10,7 +10,16 @@ from sqlalchemy import func, or_, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
-from app.api.schemas import Token, UserCreate, UserResponse
+from sqlalchemy.exc import SQLAlchemyError
+
+from app.api.schemas import (
+    AccountDeleteRequest,
+    PasswordChange,
+    ProfileUpdate,
+    Token,
+    UserCreate,
+    UserResponse,
+)
 from app.core.config import get_settings
 from app.core.database import get_db
 from app.core.security import (
@@ -176,3 +185,144 @@ def login(
 def read_current_user(current_user: User = Depends(get_current_user)) -> User:
     """Return the account the bearer token belongs to."""
     return current_user
+
+
+@router.put(
+    "/profile",
+    response_model=UserResponse,
+    summary="Update the signed-in user's profile",
+    responses={
+        400: {"description": "The current password is wrong, or the request is incomplete"},
+        401: {"description": "Missing, expired or invalid token"},
+        403: {"description": "The shared demo account cannot be modified"},
+    },
+)
+def update_profile(
+    payload: ProfileUpdate,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+) -> User:
+    """Change the display name, and optionally the password.
+
+    Username and email are deliberately immutable: both identify the account
+    elsewhere, and changing them is an account-recovery problem rather than a
+    settings one.
+    """
+    if current_user.is_demo:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="The shared demo account cannot be modified.",
+        )
+
+    wants_password_change = any(
+        (payload.current_password, payload.new_password)
+    )
+    if wants_password_change:
+        if not payload.current_password or not payload.new_password:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Both the current and new password are required.",
+            )
+        if not verify_password(payload.current_password, current_user.hashed_password):
+            # Deliberately specific: the caller is already authenticated, so
+            # this leaks nothing they do not already know.
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="That is not your current password.",
+            )
+        if verify_password(payload.new_password, current_user.hashed_password):
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="The new password must be different from the current one.",
+            )
+        current_user.hashed_password = get_password_hash(payload.new_password)
+
+    if payload.full_name is not None:
+        current_user.full_name = payload.full_name.strip() or None
+
+    try:
+        db.commit()
+    except SQLAlchemyError:
+        db.rollback()
+        logger.exception("Could not update the profile for %s", current_user.username)
+        raise HTTPException(status_code=500, detail="Could not save your changes.")
+
+    db.refresh(current_user)
+    logger.info(
+        "Profile updated for %s (password changed: %s)",
+        current_user.username,
+        bool(wants_password_change),
+    )
+    return current_user
+
+
+@router.put(
+    "/password",
+    response_model=UserResponse,
+    summary="Change the signed-in user's password",
+    responses={
+        400: {"description": "The current password is wrong, or the new one is unusable"},
+        401: {"description": "Missing, expired or invalid token"},
+        403: {"description": "The shared demo account cannot be modified"},
+    },
+)
+def change_password(
+    payload: PasswordChange,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+) -> User:
+    """Change only the password.
+
+    A thin wrapper over the same checks as PUT /profile, for callers that want
+    a dedicated endpoint rather than a partial profile update.
+    """
+    return update_profile(
+        ProfileUpdate(
+            current_password=payload.current_password,
+            new_password=payload.new_password,
+        ),
+        current_user=current_user,
+        db=db,
+    )
+
+
+@router.delete(
+    "/me",
+    status_code=status.HTTP_204_NO_CONTENT,
+    summary="Permanently delete the signed-in account",
+    responses={
+        400: {"description": "The password is wrong"},
+        403: {"description": "The shared demo account cannot be deleted"},
+    },
+)
+def delete_account(
+    payload: AccountDeleteRequest,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+) -> None:
+    """Delete the account and everything attached to it.
+
+    This is irreversible, so it is gated on the password even though the caller
+    already holds a valid token - a forgotten open session should not be enough
+    to destroy someone's history.
+    """
+    if current_user.is_demo:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="The shared demo account cannot be deleted.",
+        )
+    if not verify_password(payload.password, current_user.hashed_password):
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST, detail="That password is incorrect."
+        )
+
+    username = current_user.username
+    try:
+        # Sessions, answers and the resume all cascade from the user row.
+        db.delete(current_user)
+        db.commit()
+    except SQLAlchemyError:
+        db.rollback()
+        logger.exception("Could not delete the account %s", username)
+        raise HTTPException(status_code=500, detail="Could not delete your account.")
+    logger.info("Account deleted: %s", username)

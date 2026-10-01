@@ -16,6 +16,7 @@ import {
   ArrowUpRight,
   Check,
   Clock,
+  Compass,
   FileText,
   Lightbulb,
   MessagesSquare,
@@ -548,6 +549,100 @@ export default function Analysis() {
         </Card>
       ) : null}
 
+      {/* ---- Proctoring summary ----------------------------------------------- */}
+      {session?.proctoring_data ? (
+        <Card padding="md" className="animate-slide-up" style={stagger(8)}>
+          <div className="mb-4 flex flex-wrap items-center justify-between gap-3">
+            <div>
+              <h2 className="font-display text-lg font-semibold">Session Integrity</h2>
+              <p className="mt-0.5 text-sm text-aria-muted">
+                Focus signals recorded during the interview. These do not affect
+                your scores.
+              </p>
+            </div>
+            {session.integrity_score != null ? (
+              <div className="flex items-center gap-2.5">
+                <span className="font-display text-2xl font-bold tabular-nums">
+                  {Math.round(session.integrity_score)}
+                  <span className="text-sm text-aria-muted">/100</span>
+                </span>
+                <span
+                  className={cn(
+                    'rounded-full border px-2.5 py-1 text-xs font-semibold',
+                    session.integrity_score >= 90
+                      ? 'border-aria-green/45 bg-aria-green/10 text-aria-green'
+                      : session.integrity_score >= 70
+                        ? 'border-aria-amber/45 bg-aria-amber/10 text-aria-amber'
+                        : 'border-aria-red/45 bg-aria-red/10 text-aria-red',
+                  )}
+                >
+                  {session.integrity_score >= 90
+                    ? 'Clean'
+                    : session.integrity_score >= 70
+                      ? 'Minor flags'
+                      : 'Needs review'}
+                </span>
+              </div>
+            ) : null}
+          </div>
+
+          <div className="grid gap-3 sm:grid-cols-3">
+            <div className="rounded-xl border border-aria-border bg-aria-surface/60 p-3">
+              <p className="font-display text-xl font-bold tabular-nums">
+                {session.proctoring_data.tab_switches ?? 0}
+              </p>
+              <p className="text-xs text-aria-muted">Tab switches</p>
+            </div>
+            <div className="rounded-xl border border-aria-border bg-aria-surface/60 p-3">
+              <p className="font-display text-xl font-bold tabular-nums">
+                {Math.round((session.proctoring_data.total_away_ms ?? 0) / 1000)}s
+              </p>
+              <p className="text-xs text-aria-muted">Time away from tab</p>
+            </div>
+            <div className="rounded-xl border border-aria-border bg-aria-surface/60 p-3">
+              <p className="font-display text-xl font-bold tabular-nums">
+                {session.proctoring_data.attention_rate != null
+                  ? `${Math.round(session.proctoring_data.attention_rate * 100)}%`
+                  : '--'}
+              </p>
+              <p className="text-xs text-aria-muted">
+                {session.proctoring_data.tracking_available
+                  ? 'Facing the screen'
+                  : 'Attention not measured'}
+              </p>
+            </div>
+          </div>
+
+          {session.proctoring_data.switches?.length ? (
+            <ul className="mt-3 space-y-1.5 border-t border-aria-border pt-3">
+              {session.proctoring_data.switches.slice(0, 5).map((sw, i) => (
+                <li
+                  key={i}
+                  className="flex items-center justify-between gap-3 text-xs text-aria-muted"
+                >
+                  <span>
+                    Left the tab at{' '}
+                    {new Date(sw.at).toLocaleTimeString([], {
+                      hour: '2-digit',
+                      minute: '2-digit',
+                      second: '2-digit',
+                    })}
+                  </span>
+                  <span className="font-mono tabular-nums">
+                    {Math.round(sw.durationMs / 1000)}s
+                  </span>
+                </li>
+              ))}
+            </ul>
+          ) : null}
+
+          <p className="mt-3 text-xs text-aria-muted">
+            These are attention signals, not proof of anything. They describe
+            where the tab and camera were pointing, not what you were doing.
+          </p>
+        </Card>
+      ) : null}
+
       {/* ---- Actions ---------------------------------------------------------- */}
       <div
         className="flex animate-slide-up flex-col gap-3 border-t border-aria-border pt-6 sm:flex-row sm:justify-between"
@@ -568,6 +663,16 @@ export default function Analysis() {
           >
             Share Results
           </Button>
+          {/* Career intelligence is only generated for AI Meet interviews. */}
+          {session?.session_type === 'ai_meet' ? (
+            <Button
+              variant="outline"
+              onClick={() => navigate(`/career/${sessionId}`)}
+              leftIcon={<Compass className="h-4 w-4" />}
+            >
+              View Career Report
+            </Button>
+          ) : null}
           <Button
             onClick={() => navigate(`/report/${sessionId}`)}
             leftIcon={<FileText className="h-4 w-4" />}

@@ -43,7 +43,7 @@ STT_ERROR_STATUS = {
     "quota": status.HTTP_429_TOO_MANY_REQUESTS,
     "rate_limit": status.HTTP_429_TOO_MANY_REQUESTS,
     "empty": status.HTTP_400_BAD_REQUEST,
-    "too_large": status.HTTP_413_REQUEST_ENTITY_TOO_LARGE,
+    "too_large": status.HTTP_413_CONTENT_TOO_LARGE,
     "connection": status.HTTP_503_SERVICE_UNAVAILABLE,
     "api": status.HTTP_503_SERVICE_UNAVAILABLE,
 }
@@ -92,7 +92,6 @@ async def interview_health() -> dict:
             "detail": str(exc),
         }
 
-# TODO: question flow endpoints (the live interview runs over /ws/{session_id}).
 
 
 @router.post(
@@ -127,7 +126,7 @@ async def transcribe(
         )
     if len(audio) > MAX_AUDIO_BYTES:
         raise HTTPException(
-            status_code=status.HTTP_413_REQUEST_ENTITY_TOO_LARGE,
+            status_code=status.HTTP_413_CONTENT_TOO_LARGE,
             detail=f"Recording exceeds the {MAX_AUDIO_BYTES // 1_048_576} MB limit.",
         )
 

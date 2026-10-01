@@ -30,6 +30,11 @@ import QuestionDisplay from '../components/interview/QuestionDisplay'
 import MetricsPanel from '../components/interview/MetricsPanel'
 import AnswerHistory from '../components/interview/AnswerHistory'
 import { detectFillers, highlightFillers } from '../utils/fillerDetector'
+import { sessionsApi } from '../services/api'
+import useProctoring, { calculateIntegrityScore } from '../hooks/useProctoring'
+import { getProctoringSettings, getSetting } from '../store/settingsStore'
+import CameraMonitor from '../components/interview/CameraMonitor'
+import TabSwitchWarning from '../components/interview/TabSwitchWarning'
 import { calculateConfidence, calculateWpm } from '../utils/scoreCalculator'
 
 const MIN_TYPED_CHARS = 10
@@ -81,13 +86,46 @@ export default function Interview() {
 
   // ---- Answer input ------------------------------------------------------ //
   const [typedMode, setTypedMode] = useState(false)
+  typedModeRef.current = typedMode
   const [typedAnswer, setTypedAnswer] = useState('')
   const [elapsed, setElapsed] = useState(0)
 
+
+  // ---- Proctoring ------------------------------------------------------- //
+  // Signals only: they are recorded on the summary and never alter a score.
+  const [proctorPrefs] = useState(getProctoringSettings)
+  const proctoring = useProctoring({ enabled: proctorPrefs.tabSwitchDetection })
+  const [gazeSignals, setGazeSignals] = useState(null)
+  const onGazeSignals = useCallback((s) => setGazeSignals(s), [])
+
+  // Snapshot sent with the completion call.
+  const proctoringPayload = useCallback(
+    () => ({
+      integrity_score: calculateIntegrityScore({
+        switchCount: proctoring.switchCount,
+        totalAwayMs: proctoring.totalAwayMs,
+        suspiciousEvents: gazeSignals?.stats?.suspiciousEvents ?? 0,
+        attentionRate: gazeSignals?.attentionRate ?? null,
+      }),
+      tab_switches: proctoring.switchCount,
+      total_away_ms: proctoring.totalAwayMs,
+      suspicious_events: gazeSignals?.stats?.suspiciousEvents ?? 0,
+      attention_rate: gazeSignals?.attentionRate ?? null,
+      tracking_available: Boolean(gazeSignals?.trackingAvailable),
+      switches: proctoring.switches,
+    }),
+    [proctoring.switchCount, proctoring.totalAwayMs, proctoring.switches, gazeSignals],
+  )
+
+  // Read inside the socket handler, which must not re-subscribe when these
+  // change - refs keep the handler identity stable.
+  const typedModeRef = useRef(false)
+  const audioRef = useRef(null)
   const transcriptBoxRef = useRef(null)
   const answerStartedAt = useRef(null)
 
   const audio = useAudio()
+  audioRef.current = audio
   // Destructured because it is referenced inside the socket message handler:
   // reset is a stable useCallback, whereas the audio object is a new value on
   // every render and would churn the handler identity.
@@ -106,6 +144,18 @@ export default function Interview() {
           if (typeof msg.coach_mode === 'boolean') setCoachMode(msg.coach_mode)
           setFeedback('')
           setPhase('answering')
+          // Auto-start the mic if the candidate asked for it in Settings. The
+          // small delay lets them read the question before recording begins,
+          // and typed mode is left alone - there is nothing to record.
+          if (getSetting('autoStartMic') && !typedModeRef.current) {
+            window.setTimeout(() => {
+              if (!audioRef.current?.isRecording) {
+                answerStartedAt.current = Date.now()
+                setElapsed(0)
+                audioRef.current?.startRecording?.().catch(() => {})
+              }
+            }, 900)
+          }
           setElapsed(0)
           answerStartedAt.current = null
           setVerdict(null)
@@ -159,6 +209,11 @@ export default function Interview() {
 
         case 'interview_complete':
           setPhase('complete')
+          // Fire-and-forget: a failed proctoring write must never block the
+          // candidate from reaching their results.
+          sessionsApi
+            .complete(msg.session_id, { proctoring: proctoringPayload() })
+            .catch(() => {})
           setIsStreaming(false)
           setIsThinking(false)
           window.setTimeout(() => {
@@ -650,6 +705,14 @@ export default function Interview() {
           </section>
         </div>
       </main>
+
+      <CameraMonitor enabled={proctorPrefs.cameraMonitoring} onSignals={onGazeSignals} />
+      <TabSwitchWarning
+        event={proctoring.lastReturn}
+        count={proctoring.switchCount}
+        level={proctoring.level}
+        onResume={proctoring.acknowledge}
+      />
 
       {/* ---- Completion ------------------------------------------------------ */}
       {phase === 'complete' ? (

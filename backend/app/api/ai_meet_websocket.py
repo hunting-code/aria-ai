@@ -62,6 +62,12 @@ logger = logging.getLogger(__name__)
 # loop, and a real interviewer moves on.
 MAX_FOLLOW_UPS_PER_QUESTION = 1
 
+# Answers are tagged with the phase's display name ("Warm-up"); map back to the
+# phase key when regrouping stored rows.
+PHASE_BY_LABEL: dict[str, str] = {
+    meta["name"]: phase for phase, meta in AI_MEET_PHASES.items()
+}
+
 
 @dataclass
 class AIMeetState:
@@ -578,12 +584,24 @@ async def _complete_meet(
     db: Session,
 ) -> None:
     """Score every phase, write the debrief and guidance, close the meet."""
-    phase_scores = {
-        phase: score_service.score_phase(phase, answers)
-        for phase, answers in state.phase_answers.items()
-    }
-
     answers = await run_in_threadpool(_load_answers, db, session_uuid)
+
+    # Normally the live state holds each phase's answers. A socket that
+    # reconnected mid-interview starts with an empty map, though, so fall back
+    # to regrouping the stored answers by the phase tag they were saved with -
+    # otherwise ending after a reconnect would score no phases at all.
+    grouped = state.phase_answers
+    if not grouped:
+        grouped = {}
+        for row in answers:
+            phase = PHASE_BY_LABEL.get(row.question_tag or "")
+            if phase:
+                grouped.setdefault(phase, []).append(row)
+
+    phase_scores = {
+        phase: score_service.score_phase(phase, rows)
+        for phase, rows in grouped.items()
+    }
     answer_digest = [
         {
             "question": a.question_text,

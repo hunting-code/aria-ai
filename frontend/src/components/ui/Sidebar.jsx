@@ -8,6 +8,7 @@ import {
   Mic,
   Settings,
   X,
+  Compass,
   FileText,
 } from 'lucide-react'
 
@@ -19,6 +20,7 @@ const LINKS = [
   { to: '/select-role', label: 'New Interview', icon: Mic },
   { to: '/sessions', label: 'History', icon: History },
   { to: '/resume', label: 'Resume', icon: FileText },
+  { to: '/career', label: 'Career', icon: Compass },
   { to: '/settings', label: 'Settings', icon: Settings },
 ]
 

@@ -20,11 +20,14 @@ import {
   Timer,
   User,
   Users,
+  Video,
   Volume2,
   FileCheck2,
+  Zap,
 } from 'lucide-react'
 
 import useAuth from '../hooks/useAuth'
+import useSettings from '../store/settingsStore'
 import { resumeApi, sessionsApi, extractErrorMessage } from '../services/api'
 import { Button, Card, cn } from '../components/ui'
 
@@ -112,7 +115,97 @@ const DIFFICULTIES = [
   },
 ]
 
-const STEP_TITLES = ['Choose your role', 'Choose a difficulty', 'Before you start']
+const MODES = [
+  {
+    value: 'practice',
+    name: 'Quick Practice',
+    tagline: 'Drill questions at your own pace',
+    minutes: '10-15 min',
+    icon: Zap,
+    accent: '#1A6FD4',
+    points: [
+      'Jump straight into questions',
+      'Feedback after every answer',
+      'Pause, retry or stop any time',
+    ],
+  },
+  {
+    value: 'ai_meet',
+    name: 'AI Meet Interview',
+    tagline: 'A formal, five-phase interview',
+    minutes: '30-35 min',
+    icon: Video,
+    accent: '#F5A623',
+    points: [
+      'Warm-up, background, technical, behavioural, wrap-up',
+      'Camera on, ARIA speaks her questions aloud',
+      'Spoken debrief and a career report at the end',
+    ],
+  },
+]
+
+/** One interview-mode card on step 1. */
+function ModeCard({ mode, selected, onSelect }) {
+  const Icon = mode.icon
+  return (
+    <button
+      type="button"
+      onClick={onSelect}
+      aria-pressed={selected}
+      className={cn(
+        'group relative overflow-hidden rounded-2xl border p-5 text-left transition-all duration-200',
+        'focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-aria-pulse focus-visible:ring-offset-2 focus-visible:ring-offset-aria-void',
+        selected
+          ? 'border-transparent bg-aria-surface shadow-surface'
+          : 'border-aria-border bg-aria-surface/60 hover:-translate-y-0.5 hover:border-aria-blue/50',
+      )}
+      style={selected ? { borderColor: mode.accent } : undefined}
+    >
+      <span
+        aria-hidden="true"
+        className="absolute inset-x-0 top-0 h-1 origin-left transition-transform duration-300"
+        style={{
+          background: mode.accent,
+          transform: selected ? 'scaleX(1)' : 'scaleX(0)',
+        }}
+      />
+      <div className="flex items-start justify-between gap-3">
+        <span
+          className="grid h-11 w-11 shrink-0 place-items-center rounded-xl"
+          style={{ background: `${mode.accent}1A`, color: mode.accent }}
+        >
+          <Icon className="h-5 w-5" aria-hidden="true" />
+        </span>
+        <span className="rounded-full border border-aria-border px-2 py-0.5 font-mono text-[10px] text-aria-muted">
+          {mode.minutes}
+        </span>
+      </div>
+      <h3 className="mt-3 font-display text-lg font-semibold text-aria-text">
+        {mode.name}
+      </h3>
+      <p className="mt-0.5 text-sm text-aria-muted">{mode.tagline}</p>
+      <ul className="mt-3 space-y-1.5">
+        {mode.points.map((point) => (
+          <li key={point} className="flex items-start gap-2 text-xs text-aria-muted">
+            <Check
+              className="mt-0.5 h-3 w-3 shrink-0"
+              style={{ color: mode.accent }}
+              aria-hidden="true"
+            />
+            <span>{point}</span>
+          </li>
+        ))}
+      </ul>
+    </button>
+  )
+}
+
+const STEP_TITLES = [
+  'Choose your interview mode',
+  'Choose your role',
+  'Choose a difficulty',
+  'Before you start',
+]
 
 /* ========================================================================== */
 /* Microphone permission                                                      */
@@ -400,9 +493,14 @@ export default function RoleSelect() {
 
   const location = useLocation()
   const [step, setStep] = useState(1)
+  // 'practice' is the classic drill; 'ai_meet' is the formal phased interview.
+  const prefs = useSettings((st) => st.settings)
+  const [mode, setMode] = useState(() => prefs.defaultMode)
   const [direction, setDirection] = useState(1) // 1 forward, -1 back
   // The resume page's "Practice This Role" button arrives with a preselection.
-  const [role, setRole] = useState(location.state?.role ?? null)
+  const [role, setRole] = useState(
+    () => location.state?.role ?? prefs.defaultRole ?? null,
+  )
 
   // Resume-aware personalization: banner on step 1, specifics under the pick.
   const [resume, setResume] = useState(null)
@@ -416,7 +514,7 @@ export default function RoleSelect() {
       live = false
     }
   }, [])
-  const [difficulty, setDifficulty] = useState('intermediate')
+  const [difficulty, setDifficulty] = useState(() => prefs.defaultDifficulty)
 
   const [nameConfirmed, setNameConfirmed] = useState(false)
   const [quietConfirmed, setQuietConfirmed] = useState(false)
@@ -442,8 +540,16 @@ export default function RoleSelect() {
     setStartError(null)
     setIsStarting(true)
     try {
-      const session = await sessionsApi.create({ job_role: role, difficulty })
-      navigate(`/interview/${session.id}`)
+      const session = await sessionsApi.create({
+        job_role: role,
+        difficulty,
+        session_type: mode,
+        // Linking the resume lets ARIA interview from their real projects.
+        resume_id: mode === 'ai_meet' && resume?.id ? resume.id : undefined,
+      })
+      navigate(
+        mode === 'ai_meet' ? `/meet/${session.id}/lobby` : `/interview/${session.id}`,
+      )
     } catch (err) {
       setStartError(extractErrorMessage(err, 'Could not start the interview.'))
       setIsStarting(false)
@@ -459,7 +565,7 @@ export default function RoleSelect() {
 
   return (
     <div className="mx-auto max-w-5xl">
-      <StepIndicator step={step} total={3} />
+      <StepIndicator step={step} total={4} />
 
       {/* Fixed min-height keeps the footer buttons from jumping between steps. */}
       <div className="relative min-h-[26rem]">
@@ -473,8 +579,36 @@ export default function RoleSelect() {
             exit="exit"
             transition={{ duration: reduceMotion ? 0.12 : 0.26, ease: [0.16, 1, 0.3, 1] }}
           >
-            {/* ---- Step 1: role ------------------------------------------ */}
+            {/* ---- Step 1: mode ------------------------------------------ */}
             {step === 1 ? (
+              <div>
+                {resume ? (
+                  <div
+                    role="status"
+                    className="mb-4 flex items-center gap-2.5 rounded-xl border border-aria-green/40 bg-aria-green/10 p-3 text-sm text-aria-green"
+                  >
+                    <FileCheck2 className="h-4 w-4 shrink-0" aria-hidden="true" />
+                    <span>
+                      Resume detected - ARIA will personalize your questions based on your
+                      experience
+                    </span>
+                  </div>
+                ) : null}
+                <div className="grid gap-4 sm:grid-cols-2">
+                  {MODES.map((m) => (
+                    <ModeCard
+                      key={m.value}
+                      mode={m}
+                      selected={mode === m.value}
+                      onSelect={() => setMode(m.value)}
+                    />
+                  ))}
+                </div>
+              </div>
+            ) : null}
+
+            {/* ---- Step 2: role ------------------------------------------ */}
+            {step === 2 ? (
               <div>
                 {resume ? (
                   <div
@@ -523,8 +657,8 @@ export default function RoleSelect() {
               </div>
             ) : null}
 
-            {/* ---- Step 2: difficulty ------------------------------------ */}
-            {step === 2 ? (
+            {/* ---- Step 3: difficulty ------------------------------------ */}
+            {step === 3 ? (
               <div className="grid gap-4 lg:grid-cols-3">
                 {DIFFICULTIES.map((d) => (
                   <DifficultyCard
@@ -537,8 +671,8 @@ export default function RoleSelect() {
               </div>
             ) : null}
 
-            {/* ---- Step 3: checklist ------------------------------------- */}
-            {step === 3 ? (
+            {/* ---- Step 4: checklist ------------------------------------- */}
+            {step === 4 ? (
               <div className="space-y-4">
                 <Card padding="md" glow>
                   <p className="text-sm text-aria-muted">You are about to start</p>
@@ -548,8 +682,18 @@ export default function RoleSelect() {
                     <span style={{ color: selectedRole?.accent }}>{selectedLevel?.title}</span>
                   </p>
                   <p className="mt-1 text-sm text-aria-muted">
-                    {selectedLevel?.questions} questions · about {selectedLevel?.minutes} minutes
+                    {/* An AI Meet always runs its five phases - 12 questions -
+                        regardless of the difficulty's practice-mode count. */}
+                    {mode === 'ai_meet'
+                      ? '5 phases · 12 questions · about 30-35 minutes'
+                      : `${selectedLevel?.questions} questions · about ${selectedLevel?.minutes} minutes`}
                   </p>
+                  {mode === 'ai_meet' ? (
+                    <p className="mt-2 inline-flex items-center gap-1.5 rounded-full border border-aria-pulse/40 bg-aria-pulse/10 px-2.5 py-1 text-[11px] font-medium text-aria-pulse">
+                      <Video className="h-3 w-3" aria-hidden="true" />
+                      AI Meet · camera on, ARIA speaks aloud
+                    </p>
+                  ) : null}
                 </Card>
 
                 <ChecklistRow
@@ -646,11 +790,11 @@ export default function RoleSelect() {
           {step === 1 ? 'Cancel' : 'Back'}
         </Button>
 
-        {step < 3 ? (
+        {step < 4 ? (
           <Button
             size="lg"
             onClick={() => go(step + 1)}
-            disabled={step === 1 && !role}
+            disabled={step === 2 && !role}
             rightIcon={<ArrowRight className="h-4 w-4" />}
           >
             Continue

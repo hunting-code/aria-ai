@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from 'react'
 import { Link, useNavigate } from 'react-router-dom'
-import { LogOut, Menu, User, ClipboardList, ChevronDown } from 'lucide-react'
+import { LogOut, Menu, User, ClipboardList, ChevronDown, Compass } from 'lucide-react'
 
 import useAuth from '../../hooks/useAuth'
 import cn from './cn'
@@ -170,6 +170,10 @@ export default function Navbar({ onOpenSidebar, showMenuButton = false }) {
               <Link to="/sessions" role="menuitem" className={itemClass} onClick={() => setOpen(false)}>
                 <ClipboardList className="h-4 w-4" aria-hidden="true" />
                 My Sessions
+              </Link>
+              <Link to="/career" role="menuitem" className={itemClass} onClick={() => setOpen(false)}>
+                <Compass className="h-4 w-4" aria-hidden="true" />
+                Career
               </Link>
 
               <div className="my-1 border-t border-aria-border" />

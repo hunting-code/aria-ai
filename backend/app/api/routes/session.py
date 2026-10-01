@@ -15,6 +15,7 @@ from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.orm import Session
 
 from app.api.schemas import (
+    ProctoringPayload,
     SessionType,
     SessionCreate,
     SessionResponse,
@@ -99,7 +100,6 @@ logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/sessions", tags=["sessions"])
 
-# TODO: retrieve-one and end-session endpoints.
 
 
 @router.get(
@@ -379,6 +379,7 @@ def get_session(
 )
 async def complete_session(
     session_id: uuid.UUID = Path(..., description="The interview to finalise."),
+    proctoring: ProctoringPayload | None = None,
     regenerate: bool = Query(
         default=False,
         description="Recompute even if feedback already exists.",
@@ -406,6 +407,26 @@ async def complete_session(
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND, detail="Session not found"
         )
+
+    # Recorded before the early return below: an AI Meet is already marked
+    # complete by the socket, so a later call would otherwise drop this.
+    # Stored but never allowed to change a score - delivery and content are
+    # judged on their own.
+    if proctoring is not None:
+        session.integrity_score = proctoring.integrity_score
+        session.proctoring_data = {
+            "tab_switches": proctoring.tab_switches,
+            "total_away_ms": proctoring.total_away_ms,
+            "suspicious_events": proctoring.suspicious_events,
+            "attention_rate": proctoring.attention_rate,
+            "tracking_available": proctoring.tracking_available,
+            "switches": proctoring.switches[:50],
+        }
+        try:
+            db.commit()
+        except SQLAlchemyError:
+            db.rollback()
+            logger.exception("Could not store proctoring data")
 
     already_done = session.final_feedback and (
         session.session_type != "ai_meet"
@@ -496,6 +517,42 @@ async def complete_session(
         feedback.get("source"),
     )
     return session
+
+
+@router.delete(
+    "/all",
+    summary="Soft-delete every session for the signed-in user",
+    responses={401: {"description": "Missing, expired or invalid token"}},
+)
+@router.delete("/", include_in_schema=False)
+def delete_all_sessions(
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+) -> dict[str, int]:
+    """Clear the user's interview history.
+
+    Soft, for the same reason one-at-a-time deletion is: the rows carry
+    transcripts, and a hard delete would make past aggregates irreproducible.
+    Returns how many were cleared so the caller can say so honestly.
+    """
+    now = datetime.now(timezone.utc)
+    rows = db.scalars(
+        select(InterviewSession).where(
+            InterviewSession.user_id == current_user.id,
+            InterviewSession.deleted_at.is_(None),
+        )
+    ).all()
+    for row in rows:
+        row.deleted_at = now
+    try:
+        db.commit()
+    except SQLAlchemyError:
+        db.rollback()
+        logger.exception("Could not clear history for %s", current_user.username)
+        raise HTTPException(status_code=500, detail="Could not clear your history.")
+
+    logger.info("Cleared %d session(s) for %s", len(rows), current_user.username)
+    return {"deleted": len(rows)}
 
 
 @router.delete(
