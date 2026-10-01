@@ -8,6 +8,7 @@ them. Import models from here rather than from the individual modules:
 """
 
 from app.models.answer import Answer
+from app.models.resume import Resume
 from app.models.session import (
     Difficulty,
     InterviewSession,
@@ -18,6 +19,7 @@ from app.models.user import User
 
 __all__ = [
     "Answer",
+    "Resume",
     "Difficulty",
     "InterviewSession",
     "JobRole",

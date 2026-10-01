@@ -8,6 +8,7 @@ import {
   Mic,
   Settings,
   X,
+  FileText,
 } from 'lucide-react'
 
 import useAuth from '../../hooks/useAuth'
@@ -16,7 +17,8 @@ import cn from './cn'
 const LINKS = [
   { to: '/dashboard', label: 'Home', icon: Home, end: true },
   { to: '/select-role', label: 'New Interview', icon: Mic },
-  { to: '/history', label: 'History', icon: History },
+  { to: '/sessions', label: 'History', icon: History },
+  { to: '/resume', label: 'Resume', icon: FileText },
   { to: '/settings', label: 'Settings', icon: Settings },
 ]
 
@@ -91,8 +93,8 @@ export default function Sidebar({
       'transition-colors duration-150',
       'focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-aria-pulse',
       isActive
-        ? 'bg-aria-blue/15 text-white'
-        : 'text-aria-muted hover:bg-white/5 hover:text-aria-text',
+        ? 'bg-aria-blue/15 text-aria-text'
+        : 'text-aria-muted hover:bg-black/5 hover:text-aria-text',
     )
 
   const content = (
@@ -141,7 +143,7 @@ export default function Sidebar({
         >
           <span
             aria-hidden="true"
-            className="grid h-9 w-9 shrink-0 place-items-center rounded-full bg-aria-gradient font-mono text-xs font-bold text-white"
+            className="grid h-9 w-9 shrink-0 place-items-center rounded-full bg-aria-gradient font-mono text-xs font-bold text-aria-text"
           >
             {initialsFor(user)}
           </span>
@@ -160,7 +162,7 @@ export default function Sidebar({
             aria-label={collapsed ? 'Expand sidebar' : 'Collapse sidebar'}
             className={cn(
               'mt-3 hidden w-full items-center gap-2 rounded-lg px-3 py-2 text-sm',
-              'text-aria-muted transition-colors hover:bg-white/5 hover:text-aria-text lg:flex',
+              'text-aria-muted transition-colors hover:bg-black/5 hover:text-aria-text lg:flex',
               collapsed && 'lg:justify-center lg:px-0',
             )}
           >
@@ -212,7 +214,7 @@ export default function Sidebar({
                 type="button"
                 onClick={onCloseMobile}
                 aria-label="Close navigation menu"
-                className="rounded-lg p-2 text-aria-muted hover:bg-white/5 hover:text-aria-text"
+                className="rounded-lg p-2 text-aria-muted hover:bg-black/5 hover:text-aria-text"
               >
                 <X className="h-5 w-5" aria-hidden="true" />
               </button>

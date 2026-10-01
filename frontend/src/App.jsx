@@ -1,18 +1,11 @@
 // Application shell: router, auth gating and the two page layouts.
 
-import { Suspense, lazy, useEffect, useState } from 'react'
-import {
-  BrowserRouter,
-  Navigate,
-  Outlet,
-  Route,
-  Routes,
-  useLocation,
-} from 'react-router-dom'
+import { Suspense, lazy, useEffect } from 'react'
+import { BrowserRouter, Navigate, Route, Routes } from 'react-router-dom'
 
 import useAuth from './hooks/useAuth'
-import Navbar from './components/ui/Navbar'
-import Sidebar from './components/ui/Sidebar'
+import AppLayout from './components/layout/AppLayout'
+import ProtectedRoute from './components/auth/ProtectedRoute'
 import Toaster from './components/ui/Toast'
 import { AriaLogo } from './components/ui/Navbar'
 import LoadingSpinner from './components/ui/LoadingSpinner'
@@ -23,6 +16,7 @@ import { PageSkeleton } from './components/ui/Skeleton'
 // pulls in the PDF stack, and nobody should download either to reach /login.
 const Analysis = lazy(() => import('./pages/Analysis'))
 const Landing = lazy(() => import('./pages/Landing'))
+const ResumeUpload = lazy(() => import('./pages/ResumeUpload'))
 const Sessions = lazy(() => import('./pages/Sessions'))
 const Home = lazy(() => import('./pages/Home'))
 const Interview = lazy(() => import('./pages/Interview'))
@@ -31,8 +25,6 @@ const Register = lazy(() => import('./pages/Register'))
 const Report = lazy(() => import('./pages/Report'))
 const RoleSelect = lazy(() => import('./pages/RoleSelect'))
 const Settings = lazy(() => import('./pages/Settings'))
-
-const SIDEBAR_KEY = 'aria_sidebar_collapsed'
 
 /** Shown while the stored token is being checked against the server. */
 function Splash() {
@@ -64,24 +56,6 @@ function AuthProvider({ children }) {
   return children
 }
 
-/** Gate for signed-in routes. Remembers where the user was heading. */
-function RequireAuth() {
-  const isAuthenticated = useAuth((s) => s.isAuthenticated)
-  const location = useLocation()
-
-  if (!isAuthenticated) {
-    return <Navigate to="/login" replace state={{ from: location }} />
-  }
-  return <Outlet />
-}
-
-/** Keeps signed-in users off /login and /register. */
-function RedirectIfAuthenticated() {
-  const isAuthenticated = useAuth((s) => s.isAuthenticated)
-  if (isAuthenticated) return <Navigate to="/dashboard" replace />
-  return <Outlet />
-}
-
 /**
  * The public landing page. A signed-in visitor is bounced straight to their
  * dashboard - the marketing pitch is for people who are not customers yet.
@@ -90,66 +64,6 @@ function LandingGate() {
   const isAuthenticated = useAuth((s) => s.isAuthenticated)
   if (isAuthenticated) return <Navigate to="/dashboard" replace />
   return <Landing />
-}
-
-/** Navbar + collapsible sidebar, for the dashboard-style pages. */
-function DashboardLayout() {
-  const [collapsed, setCollapsed] = useState(() => {
-    try {
-      return window.localStorage.getItem(SIDEBAR_KEY) === 'true'
-    } catch {
-      return false
-    }
-  })
-  const [mobileOpen, setMobileOpen] = useState(false)
-
-  const toggleCollapse = () => {
-    setCollapsed((v) => {
-      const next = !v
-      try {
-        window.localStorage.setItem(SIDEBAR_KEY, String(next))
-      } catch {
-        /* preference is non-critical */
-      }
-      return next
-    })
-  }
-
-  return (
-    <div className="min-h-screen bg-aria-void">
-      <Navbar showMenuButton onOpenSidebar={() => setMobileOpen(true)} />
-      <Sidebar
-        collapsed={collapsed}
-        onToggleCollapse={toggleCollapse}
-        mobileOpen={mobileOpen}
-        onCloseMobile={() => setMobileOpen(false)}
-      />
-      <main
-        id="main"
-        className={
-          'px-4 pb-16 pt-24 transition-[padding] duration-200 ease-out-expo sm:px-6 ' +
-          (collapsed ? 'lg:pl-[88px]' : 'lg:pl-64')
-        }
-      >
-        <Outlet />
-      </main>
-    </div>
-  )
-}
-
-/**
- * Navbar only - used for the interview, analysis and report screens, where a
- * persistent nav rail would compete with the content for attention.
- */
-function FocusLayout() {
-  return (
-    <div className="min-h-screen bg-aria-void">
-      <Navbar />
-      <main id="main" className="px-4 pb-16 pt-24 sm:px-6">
-        <Outlet />
-      </main>
-    </div>
-  )
 }
 
 export default function App() {
@@ -171,29 +85,27 @@ export default function App() {
             layout, so the page does not jump when the chunk lands. */}
         <Suspense fallback={<div className="px-4 pt-24 sm:px-6"><PageSkeleton /></div>}>
         <Routes>
-          {/* Public */}
+          {/* Public standalone routes - no app shell, no sidebar, no navbar. */}
           <Route path="/" element={<LandingGate />} />
-          <Route element={<RedirectIfAuthenticated />}>
-            <Route path="/login" element={<Login />} />
-            <Route path="/register" element={<Register />} />
-          </Route>
+          <Route path="/login" element={<Login />} />
+          <Route path="/register" element={<Register />} />
 
-          {/* Protected */}
-          <Route element={<RequireAuth />}>
-            <Route element={<DashboardLayout />}>
-              <Route path="/dashboard" element={<Home />} />
-              <Route path="/select-role" element={<RoleSelect />} />
-              <Route path="/history" element={<Sessions />} />
-              <Route path="/settings" element={<Settings />} />
-              {/* Analysis is a review screen, not a timed one: it keeps the
-                  nav rail so the candidate can move on afterwards. */}
-              <Route path="/analysis/:sessionId" element={<Analysis />} />
-            </Route>
-
-            <Route element={<FocusLayout />}>
-              <Route path="/interview/:sessionId" element={<Interview />} />
-              <Route path="/report/:sessionId" element={<Report />} />
-            </Route>
+          {/* Protected app routes - navbar + sidebar via AppLayout. */}
+          <Route
+            element={
+              <ProtectedRoute>
+                <AppLayout />
+              </ProtectedRoute>
+            }
+          >
+            <Route path="/dashboard" element={<Home />} />
+            <Route path="/select-role" element={<RoleSelect />} />
+            <Route path="/interview/:sessionId" element={<Interview />} />
+            <Route path="/analysis/:sessionId" element={<Analysis />} />
+            <Route path="/report/:sessionId" element={<Report />} />
+            <Route path="/sessions" element={<Sessions />} />
+            <Route path="/resume" element={<ResumeUpload />} />
+            <Route path="/settings" element={<Settings />} />
           </Route>
 
           {/* Unknown paths fall back to the landing page, which forwards

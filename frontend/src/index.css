@@ -7,7 +7,7 @@
 /* ========================================================================== */
 @layer base {
   :root {
-    color-scheme: dark;
+    color-scheme: light;
     /* Consumed by .score-ring and the ring components. */
     --ring-size: 120px;
     --ring-stroke: 8px;
@@ -24,7 +24,7 @@
 
   body {
     @apply bg-aria-void font-sans text-aria-text antialiased;
-    /* A faint blue horizon keeps the void from reading as flat black. */
+    /* A faint golden horizon keeps the cream ground from reading as flat. */
     background-image: theme('backgroundImage.aria-radial');
     background-attachment: fixed;
     min-height: 100vh;
@@ -63,7 +63,7 @@
   /* Scrollbars: Firefox first, then WebKit. */
   * {
     scrollbar-width: thin;
-    scrollbar-color: #2d7dd2 #1e2d40;
+    scrollbar-color: #d4891a #e8ddd0;
   }
 
   ::-webkit-scrollbar {
@@ -117,20 +117,20 @@
 
   @supports (backdrop-filter: blur(12px)) or (-webkit-backdrop-filter: blur(12px)) {
     .glass {
-      @apply border border-aria-border bg-white/5 backdrop-blur-md;
+      @apply border border-aria-border bg-white/60 backdrop-blur-md;
       -webkit-backdrop-filter: blur(12px);
     }
   }
 
   .glow {
-    box-shadow: 0 0 20px rgba(0, 212, 255, 0.3);
+    box-shadow: 0 0 20px rgba(245, 166, 35, 0.3);
   }
 
   .glow-border {
     @apply border-aria-pulse/40;
     box-shadow:
-      0 0 20px rgba(0, 212, 255, 0.18),
-      inset 0 0 20px rgba(0, 212, 255, 0.05);
+      0 0 20px rgba(245, 166, 35, 0.18),
+      inset 0 0 20px rgba(245, 166, 35, 0.05);
   }
 
   /* Gradient wordmark / headline text. */

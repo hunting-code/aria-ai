@@ -63,7 +63,7 @@ const PARTICLES = Array.from({ length: 28 }, (_, i) => {
     x: Math.cos(angle) * distance,
     y: Math.sin(angle) * distance - 40,
     delay: (i % 7) * 0.06,
-    color: ['#00D4FF', '#2D7DD2', '#10B981', '#F59E0B'][i % 4],
+    color: ['#F5A623', '#2D7A8C', '#178A5B', '#A855F7'][i % 4],
     size: 4 + (i % 3) * 2,
   }
 })
@@ -504,43 +504,43 @@ export default function Analysis() {
               <LineChart data={comparison} margin={{ top: 8, right: 8, left: -20, bottom: 0 }}>
                 <XAxis
                   dataKey="metric"
-                  stroke="#6B7A99"
-                  tick={{ fill: '#6B7A99', fontSize: 11 }}
+                  stroke="#7A6E62"
+                  tick={{ fill: '#7A6E62', fontSize: 11 }}
                   tickLine={false}
-                  axisLine={{ stroke: '#1E2D40' }}
+                  axisLine={{ stroke: '#D9CFC4' }}
                 />
                 <YAxis
                   domain={[0, 100]}
-                  stroke="#6B7A99"
-                  tick={{ fill: '#6B7A99', fontSize: 11 }}
+                  stroke="#7A6E62"
+                  tick={{ fill: '#7A6E62', fontSize: 11 }}
                   tickLine={false}
                   axisLine={false}
                 />
                 <Tooltip
                   contentStyle={{
-                    background: '#161B27',
-                    border: '1px solid #1E2D40',
+                    background: '#FFFFFF',
+                    border: '1px solid #D9CFC4',
                     borderRadius: 8,
                     fontSize: 12,
                   }}
-                  labelStyle={{ color: '#E8EDF5' }}
+                  labelStyle={{ color: '#1A1F2E' }}
                 />
                 <Line
                   type="monotone"
                   dataKey="previous"
                   name="Last session"
-                  stroke="#6B7A99"
+                  stroke="#7A6E62"
                   strokeWidth={2}
                   strokeDasharray="4 4"
-                  dot={{ r: 3, fill: '#6B7A99' }}
+                  dot={{ r: 3, fill: '#7A6E62' }}
                 />
                 <Line
                   type="monotone"
                   dataKey="current"
                   name="This session"
-                  stroke="#00D4FF"
+                  stroke="#F5A623"
                   strokeWidth={2.5}
-                  dot={{ r: 4, fill: '#00D4FF' }}
+                  dot={{ r: 4, fill: '#F5A623' }}
                 />
               </LineChart>
             </ResponsiveContainer>

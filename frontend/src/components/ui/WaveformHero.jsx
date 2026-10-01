@@ -36,7 +36,7 @@ export default function WaveformHero({ className }) {
       aria-hidden="true"
     >
       {/* Soft bloom behind the bars so they read as emitting light. */}
-      <div className="pointer-events-none absolute inset-0 -z-10 bg-[radial-gradient(ellipse_60%_50%_at_50%_50%,rgba(0,212,255,0.16),transparent_70%)] blur-xl" />
+      <div className="pointer-events-none absolute inset-0 -z-10 bg-[radial-gradient(ellipse_60%_50%_at_50%_50%,rgba(245,166,35,0.16),transparent_70%)] blur-xl" />
 
       {BARS.map((bar, i) => (
         <span
@@ -46,7 +46,7 @@ export default function WaveformHero({ className }) {
             height: `${bar.height}%`,
             animationDelay: `${bar.delay}s`,
             animationDuration: `${bar.duration}s`,
-            boxShadow: '0 0 12px rgba(0,212,255,0.35)',
+            boxShadow: '0 0 12px rgba(245,166,35,0.35)',
           }}
         />
       ))}

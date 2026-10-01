@@ -11,18 +11,18 @@ const BASE =
 
 const VARIANTS = {
   primary:
-    'bg-aria-gradient text-white shadow-glow-blue ' +
+    'bg-aria-gradient text-aria-text shadow-glow-blue ' +
     'hover:brightness-110 hover:shadow-glow active:brightness-95 ' +
     'disabled:hover:brightness-100',
   ghost:
-    'bg-transparent text-aria-text hover:bg-white/5 active:bg-white/10 ' +
+    'bg-transparent text-aria-text hover:bg-black/5 active:bg-black/10 ' +
     'disabled:hover:bg-transparent',
   danger:
     'bg-aria-red text-white hover:bg-aria-red/90 active:bg-aria-red/80 ' +
     'shadow-[0_0_20px_rgba(239,68,68,0.25)] disabled:hover:bg-aria-red',
   outline:
     'border border-aria-border bg-transparent text-aria-text ' +
-    'hover:border-aria-blue hover:bg-aria-blue/10 hover:text-white ' +
+    'hover:border-aria-blue hover:bg-aria-blue/10 hover:text-aria-text ' +
     'active:bg-aria-blue/20 disabled:hover:border-aria-border disabled:hover:bg-transparent',
 }
 

@@ -11,12 +11,12 @@ export function scoreTone(value) {
 }
 
 export const TONE_HEX = {
-  green: '#10B981',
-  amber: '#F59E0B',
-  red: '#EF4444',
-  blue: '#2D7DD2',
-  pulse: '#00D4FF',
-  muted: '#6B7A99',
+  green: '#178A5B',
+  amber: '#B07408',
+  red: '#C43D3D',
+  blue: '#D4891A',
+  pulse: '#F5A623',
+  muted: '#7A6E62',
 }
 
 export const TONE_TEXT = {

@@ -21,14 +21,14 @@ import {
 
 // Chart chrome is not themable through Tailwind classes - recharts takes SVG
 // attributes - so the palette values are repeated here deliberately.
-const AXIS = '#6B7A99'
-const GRID = '#1E2D40'
-const BLUE = '#2D7DD2'
-const PULSE = '#00D4FF'
+const AXIS = '#7A6E62'
+const GRID = '#D9CFC4'
+const BLUE = '#D4891A'
+const PULSE = '#F5A623'
 
 const TOOLTIP_STYLE = {
-  background: '#161B27',
-  border: '1px solid #1E2D40',
+  background: '#FFFFFF',
+  border: '1px solid #D9CFC4',
   borderRadius: 8,
   fontSize: 12,
 }
@@ -70,7 +70,7 @@ export function ScoreTrendChart({ points = [], height = 240 }) {
           <CartesianGrid stroke={GRID} strokeDasharray="3 3" vertical={false} />
           <XAxis dataKey="label" stroke={AXIS} tick={{ fill: AXIS, fontSize: 11 }} tickLine={false} axisLine={{ stroke: GRID }} />
           <YAxis domain={[0, 100]} ticks={[0, 25, 50, 75, 100]} stroke={AXIS} tick={{ fill: AXIS, fontSize: 11 }} tickLine={false} axisLine={false} />
-          <Tooltip contentStyle={TOOLTIP_STYLE} labelStyle={{ color: '#E8EDF5' }} />
+          <Tooltip contentStyle={TOOLTIP_STYLE} labelStyle={{ color: '#1A1F2E' }} />
           <Line
             type="monotone"
             dataKey="score"
@@ -118,7 +118,7 @@ export function DimensionRadar({ averages = {}, height = 260 }) {
           <PolarGrid stroke={GRID} />
           <PolarAngleAxis dataKey="dimension" tick={{ fill: AXIS, fontSize: 11 }} />
           <PolarRadiusAxis domain={[0, 100]} angle={90} tick={{ fill: AXIS, fontSize: 9 }} axisLine={false} />
-          <Tooltip contentStyle={TOOLTIP_STYLE} labelStyle={{ color: '#E8EDF5' }} />
+          <Tooltip contentStyle={TOOLTIP_STYLE} labelStyle={{ color: '#1A1F2E' }} />
           <Radar name="Average" dataKey="value" stroke={PULSE} fill={BLUE} fillOpacity={0.35} />
         </RadarChart>
       </ResponsiveContainer>
@@ -149,7 +149,7 @@ export function SessionsPerWeekChart({ weeks = [], height = 220 }) {
           <CartesianGrid stroke={GRID} strokeDasharray="3 3" vertical={false} />
           <XAxis dataKey="week" stroke={AXIS} tick={{ fill: AXIS, fontSize: 11 }} tickLine={false} axisLine={{ stroke: GRID }} />
           <YAxis allowDecimals={false} stroke={AXIS} tick={{ fill: AXIS, fontSize: 11 }} tickLine={false} axisLine={false} />
-          <Tooltip contentStyle={TOOLTIP_STYLE} labelStyle={{ color: '#E8EDF5' }} cursor={{ fill: 'rgba(45,125,210,0.08)' }} />
+          <Tooltip contentStyle={TOOLTIP_STYLE} labelStyle={{ color: '#1A1F2E' }} cursor={{ fill: 'rgba(212,137,26,0.08)' }} />
           <Bar dataKey="sessions" name="Sessions" fill="url(#weekBar)" radius={[4, 4, 0, 0]} maxBarSize={48} />
         </BarChart>
       </ResponsiveContainer>
@@ -179,7 +179,7 @@ export function ComparisonChart({ a, b, height = 260 }) {
           <CartesianGrid stroke={GRID} strokeDasharray="3 3" vertical={false} />
           <XAxis dataKey="metric" stroke={AXIS} tick={{ fill: AXIS, fontSize: 11 }} tickLine={false} axisLine={{ stroke: GRID }} />
           <YAxis domain={[0, 100]} stroke={AXIS} tick={{ fill: AXIS, fontSize: 11 }} tickLine={false} axisLine={false} />
-          <Tooltip contentStyle={TOOLTIP_STYLE} labelStyle={{ color: '#E8EDF5' }} cursor={{ fill: 'rgba(45,125,210,0.08)' }} />
+          <Tooltip contentStyle={TOOLTIP_STYLE} labelStyle={{ color: '#1A1F2E' }} cursor={{ fill: 'rgba(212,137,26,0.08)' }} />
           <Legend wrapperStyle={{ fontSize: 11, color: AXIS }} />
           <Bar dataKey="first" name="Older" fill={AXIS} radius={[3, 3, 0, 0]} maxBarSize={26} />
           <Bar dataKey="second" name="Newer" fill={PULSE} radius={[3, 3, 0, 0]} maxBarSize={26} />

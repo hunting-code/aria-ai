@@ -15,6 +15,7 @@ from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.orm import Session
 
 from app.api.schemas import (
+    SessionType,
     SessionCreate,
     SessionResponse,
     SessionStats,
@@ -23,10 +24,23 @@ from app.api.schemas import (
 from app.core.database import get_db
 from app.core.limiter import CREATE_SESSION_LIMIT, limiter
 from app.core.security import get_current_user
-from app.models import Answer, InterviewSession, User
+from app.models import Answer, InterviewSession, Resume, User
 from app.models.session import SessionStatus
-from app.services.llm_service import MODE_COACH, default_mode_for, llm_service
+from app.services.llm_service import (
+    AI_MEET_PHASES,
+    MODE_COACH,
+    default_mode_for,
+    generate_career_guidance,
+    generate_verbal_debrief,
+    llm_service,
+)
 from app.services.score_service import score_service
+
+# Answers are tagged with the phase's display name ("Warm-up"); map back to the
+# phase key the scorer and the model columns use.
+PHASE_BY_LABEL: dict[str, str] = {
+    meta["name"]: phase for phase, meta in AI_MEET_PHASES.items()
+}
 
 
 # Streak badge tiers. A streak counts consecutive *calendar days* on which at
@@ -153,6 +167,25 @@ def create_session(
     caller cannot create a session against someone else's account. The session
     starts in `active`; scores stay null until it is graded.
     """
+    # AI Meet can interview from the candidate's resume. The resume is looked
+    # up by owner, never trusted from the request body, so a caller cannot
+    # attach someone else's resume by guessing an id.
+    is_meet = payload.session_type is SessionType.AI_MEET
+    resume_used = False
+    if is_meet and payload.resume_id is not None:
+        resume = db.scalar(
+            select(Resume).where(
+                Resume.id == payload.resume_id,
+                Resume.user_id == current_user.id,
+            )
+        )
+        if resume is None:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="That resume was not found on your account.",
+            )
+        resume_used = bool(resume.parsed_data)
+
     session = InterviewSession(
         user_id=current_user.id,
         job_role=payload.job_role.value,
@@ -161,6 +194,9 @@ def create_session(
         # Coaching by default, pressure for advanced. The candidate can toggle
         # it mid-interview.
         coach_mode=default_mode_for(payload.difficulty.value) == MODE_COACH,
+        session_type=payload.session_type.value,
+        meet_phase="warmup" if is_meet else None,
+        resume_used=resume_used,
     )
     db.add(session)
     try:
@@ -371,7 +407,11 @@ async def complete_session(
             status_code=status.HTTP_404_NOT_FOUND, detail="Session not found"
         )
 
-    if session.final_feedback and not regenerate:
+    already_done = session.final_feedback and (
+        session.session_type != "ai_meet"
+        or (session.verbal_debrief and session.career_guidance)
+    )
+    if already_done and not regenerate:
         return session
 
     answers = db.scalars(
@@ -384,6 +424,54 @@ async def complete_session(
     feedback = await score_service.generate_final_feedback(
         session, list(answers), llm_service
     )
+
+    # An AI Meet also earns a per-phase breakdown, the spoken debrief and
+    # career guidance. The socket writes these when the meet runs to its end;
+    # this fills them in for a meet that was ended early or is being
+    # regenerated, so both paths converge on the same stored result.
+    if session.session_type == "ai_meet":
+        by_phase: dict[str, list] = {}
+        for answer in answers:
+            phase = PHASE_BY_LABEL.get(answer.question_tag or "")
+            if phase:
+                by_phase.setdefault(phase, []).append(answer)
+        session.phase_scores = {
+            phase: score_service.score_phase(phase, rows)
+            for phase, rows in by_phase.items()
+        }
+
+        candidate_name = (
+            current_user.full_name or current_user.username or "there"
+        ).split(" ")[0]
+        digest = [
+            {
+                "question": a.question_text,
+                "answer": (a.transcript or "")[:1200],
+                "answer_score": a.answer_score,
+                "phase": a.question_tag,
+            }
+            for a in answers
+        ]
+        session_data = {
+            "job_role": session.job_role,
+            "overall_score": scores["overall_score"],
+            "phase_scores": session.phase_scores,
+        }
+        resume_data = None
+        if session.resume_used:
+            resume = db.scalar(
+                select(Resume).where(Resume.user_id == current_user.id)
+            )
+            resume_data = resume.parsed_data if resume else None
+
+        if not session.verbal_debrief or regenerate:
+            session.verbal_debrief = await generate_verbal_debrief(
+                session_data, digest, candidate_name
+            )
+        if not session.career_guidance or regenerate:
+            session.career_guidance = await generate_career_guidance(
+                session_data, digest, resume_data
+            )
 
     session.answer_score = scores["answer_score"]
     session.communication_score = scores["communication_score"]

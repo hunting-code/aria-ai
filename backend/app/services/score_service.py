@@ -26,6 +26,34 @@ SCORE_WEIGHTS: Final[dict[str, float]] = {
     "filler": 0.15,
 }
 
+# AI Meet phases are scored on what each one actually tests. The warm-up is a
+# delivery check; the technical phase is a content check. Each row sums to 1.0.
+PHASE_WEIGHTS: Final[dict[str, dict[str, float]]] = {
+    "warmup": {"communication": 0.70, "confidence": 0.30},
+    "background": {"answer": 0.60, "communication": 0.40},
+    "technical": {"answer": 0.80, "communication": 0.20},
+    "behavioral": {"answer": 0.50, "communication": 0.30, "confidence": 0.20},
+    # Wrap-up is a courtesy exchange, not an assessment; it is scored like the
+    # warm-up so an awkward closing cannot distort the overall result.
+    "wrap_up": {"communication": 0.70, "confidence": 0.30},
+}
+
+PHASE_LABELS: Final[dict[str, str]] = {
+    "warmup": "Warm-up",
+    "background": "Background",
+    "technical": "Technical",
+    "behavioral": "Behavioral",
+    "wrap_up": "Wrap-up",
+}
+
+PHASE_FOCUS: Final[dict[str, str]] = {
+    "warmup": "your delivery and composure",
+    "background": "the detail behind your experience",
+    "technical": "your technical depth",
+    "behavioral": "your STAR structure and specifics",
+    "wrap_up": "your closing",
+}
+
 # --- Communication sub-score budgets (sum to 100) --------------------------- #
 VOCABULARY_POINTS: Final[float] = 30.0
 VARIETY_POINTS: Final[float] = 30.0
@@ -341,6 +369,58 @@ class ScoreService:
             "answers_scored": len(answers),
         }
 
+    # ---- AI Meet: per-phase scoring ------------------------------------- #
+    def score_phase(self, phase: str, answers: list) -> dict[str, Any]:
+        """Score one AI Meet phase.
+
+        Each phase is judged on what it actually tests: the warm-up is about
+        delivery, not content; the technical phase is almost entirely content.
+        Weights per phase sum to 1.0, so the result stays on the 0-100 scale.
+        """
+        weights = PHASE_WEIGHTS.get(phase, PHASE_WEIGHTS["background"])
+        scored = [a for a in (answers or []) if getattr(a, "answer_score", None) is not None]
+
+        if not scored:
+            return {
+                "score": None,
+                "notes": "No answers were recorded in this phase.",
+                "answers_scored": 0,
+            }
+
+        def mean(attr: str) -> float:
+            values = [
+                float(getattr(a, attr))
+                for a in scored
+                if getattr(a, attr, None) is not None
+            ]
+            return sum(values) / len(values) if values else 0.0
+
+        score = _clamp(
+            mean("answer_score") * weights.get("answer", 0.0)
+            + mean("communication_score") * weights.get("communication", 0.0)
+            + mean("confidence_score") * weights.get("confidence", 0.0)
+        )
+        return {
+            "score": round(score, 1),
+            "notes": self._phase_notes(phase, score, len(scored)),
+            "answers_scored": len(scored),
+        }
+
+    @staticmethod
+    def _phase_notes(phase: str, score: float, count: int) -> str:
+        """One honest sentence about how the phase went."""
+        label = PHASE_LABELS.get(phase, phase.replace("_", " "))
+        focus = PHASE_FOCUS.get(phase, "your answers")
+        if score >= 80:
+            band = f"Strong {label.lower()} - {focus} held up well"
+        elif score >= 65:
+            band = f"Solid {label.lower()}, though {focus} could go deeper"
+        elif score >= 50:
+            band = f"Mixed {label.lower()} - {focus} needs more substance"
+        else:
+            band = f"Weak {label.lower()}; {focus} is the thing to rebuild first"
+        return f"{band} (across {count} answer{'s' if count != 1 else ''})."
+
     @staticmethod
     def calculate_filler_score(filler_count: int, word_count: int) -> float:
         """100 for clean speech, falling as filler density rises."""
@@ -493,4 +573,4 @@ class ScoreService:
 
 score_service = ScoreService()
 
-__all__ = ["ScoreService", "SCORE_WEIGHTS", "score_service"]
+__all__ = ["ScoreService", "SCORE_WEIGHTS", "PHASE_WEIGHTS", "score_service"]

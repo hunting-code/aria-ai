@@ -1,10 +1,12 @@
-import { useState } from 'react'
+// Sign-in page, in the landing page's warm visual style. Auth logic is
+// unchanged: zustand login, demo prefill via router state, return-to redirect.
+
+import { useEffect, useState } from 'react'
 import { Link, useLocation, useNavigate } from 'react-router-dom'
 import { AlertCircle, Eye, EyeOff, Lock, User } from 'lucide-react'
 
 import useAuth from '../hooks/useAuth'
-import { Button, Card, Input } from '../components/ui'
-import { BrandPanel } from '../components/ui/WaveformHero'
+import AuthShell, { AuthField } from '../components/auth/AuthShell'
 
 export default function Login() {
   const navigate = useNavigate()
@@ -21,6 +23,18 @@ export default function Login() {
     username: prefill?.username ?? '',
     password: prefill?.password ?? '',
   })
+
+  // Also react to state arriving after mount (e.g. an in-page navigation back
+  // to /login with fresh credentials).
+  useEffect(() => {
+    if (location.state?.username) {
+      setForm({
+        username: location.state.username,
+        password: location.state.password ?? '',
+      })
+    }
+  }, [location.state])
+
   const [showPassword, setShowPassword] = useState(false)
   const [error, setError] = useState(null)
 
@@ -51,88 +65,65 @@ export default function Login() {
   const message = error ?? storeError
 
   return (
-    <div className="min-h-screen bg-aria-void">
-      <div className="mx-auto grid min-h-screen max-w-7xl grid-cols-1 gap-12 px-6 py-12 lg:grid-cols-2 lg:items-center lg:gap-16 lg:px-10">
-        {/* Branding - on top when stacked, left half on desktop */}
-        <div className="flex justify-center lg:justify-start">
-          <BrandPanel />
+    <AuthShell>
+      <h2 className="auth-title">WELCOME BACK</h2>
+      <p className="auth-sub">Sign in to continue your practice.</p>
+
+      {message ? (
+        <div role="alert" className="auth-error">
+          <AlertCircle size={16} style={{ flexShrink: 0, marginTop: 1 }} aria-hidden="true" />
+          <span>{message}</span>
         </div>
+      ) : null}
 
-        {/* Form */}
-        <div className="flex justify-center lg:justify-end">
-          <Card className="w-full max-w-md" padding="lg" glow>
-            <div className="mb-6">
-              <h2 className="font-display text-2xl font-semibold">Welcome back</h2>
-              <p className="mt-1 text-sm text-aria-muted">
-                Sign in to continue your practice.
-              </p>
-            </div>
+      <form onSubmit={handleSubmit} noValidate className="auth-form">
+        <AuthField
+          label="Username"
+          id="username"
+          name="username"
+          autoComplete="username"
+          placeholder="alice"
+          value={form.username}
+          onChange={update('username')}
+          icon={<User size={16} />}
+          required
+        />
 
-            {message ? (
-              <div
-                role="alert"
-                className="mb-5 flex items-start gap-2.5 rounded-lg border border-aria-red/40 bg-aria-red/10 p-3 text-sm text-aria-red"
-              >
-                <AlertCircle className="mt-0.5 h-4 w-4 shrink-0" aria-hidden="true" />
-                <span>{message}</span>
-              </div>
-            ) : null}
+        <AuthField
+          label="Password"
+          id="password"
+          name="password"
+          type={showPassword ? 'text' : 'password'}
+          autoComplete="current-password"
+          placeholder="••••••••"
+          value={form.password}
+          onChange={update('password')}
+          icon={<Lock size={16} />}
+          required
+          rightElement={
+            <button
+              type="button"
+              onClick={() => setShowPassword((v) => !v)}
+              aria-label={showPassword ? 'Hide password' : 'Show password'}
+            >
+              {showPassword ? (
+                <EyeOff size={16} aria-hidden="true" />
+              ) : (
+                <Eye size={16} aria-hidden="true" />
+              )}
+            </button>
+          }
+        />
 
-            <form onSubmit={handleSubmit} noValidate className="space-y-4">
-              <Input
-                label="Username"
-                name="username"
-                autoComplete="username"
-                placeholder="alice"
-                value={form.username}
-                onChange={update('username')}
-                leftIcon={<User className="h-4 w-4" />}
-                required
-              />
+        <button type="submit" className="btn-gold auth-submit" disabled={isLoading}>
+          {isLoading ? 'Signing in…' : 'Sign in'}
+          {!isLoading && <div className="btn-gold-arrow" aria-hidden="true">↗</div>}
+        </button>
+      </form>
 
-              <Input
-                label="Password"
-                name="password"
-                type={showPassword ? 'text' : 'password'}
-                autoComplete="current-password"
-                placeholder="••••••••"
-                value={form.password}
-                onChange={update('password')}
-                leftIcon={<Lock className="h-4 w-4" />}
-                required
-                rightElement={
-                  <button
-                    type="button"
-                    onClick={() => setShowPassword((v) => !v)}
-                    aria-label={showPassword ? 'Hide password' : 'Show password'}
-                    className="rounded-md p-1 text-aria-muted transition-colors hover:text-aria-text"
-                  >
-                    {showPassword ? (
-                      <EyeOff className="h-4 w-4" aria-hidden="true" />
-                    ) : (
-                      <Eye className="h-4 w-4" aria-hidden="true" />
-                    )}
-                  </button>
-                }
-              />
-
-              <Button type="submit" fullWidth size="lg" isLoading={isLoading}>
-                Sign in
-              </Button>
-            </form>
-
-            <p className="mt-6 text-center text-sm text-aria-muted">
-              New to ARIA?{' '}
-              <Link
-                to="/register"
-                className="font-medium text-aria-pulse underline-offset-4 hover:underline"
-              >
-                Create free account
-              </Link>
-            </p>
-          </Card>
-        </div>
-      </div>
-    </div>
+      <p className="auth-alt">
+        New to ARIA? <Link to="/register">Create free account</Link>
+      </p>
+    </AuthShell>
   )
 }

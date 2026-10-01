@@ -1,24 +1,25 @@
 /** @type {import('tailwindcss').Config} */
 
-// "Neural dark": deep-space navy ground, electric blue-to-cyan light, and
-// waveform motion. Every colour below is referenced by name in the UI kit -
+// "Golden dusk": warm cream ground, amber-gold light and deep ocean teal -
+// the same palette as the public landing page, so the whole product reads as
+// one brand. Every colour below is referenced by name in the UI kit -
 // avoid hard-coded hex values in components so a re-theme stays a one-file job.
 export default {
   content: ['./index.html', './src/**/*.{js,jsx}'],
   theme: {
     extend: {
       colors: {
-        'aria-void': '#080B14', // deepest background, page ground
-        'aria-base': '#0D1117', // raised page background
-        'aria-surface': '#161B27', // cards, panels
-        'aria-border': '#1E2D40', // hairlines, dividers
-        'aria-blue': '#2D7DD2', // primary accent, electric blue
-        'aria-pulse': '#00D4FF', // glow accent, cyan
-        'aria-green': '#10B981', // success, strong scores
-        'aria-amber': '#F59E0B', // warning, middling scores
-        'aria-red': '#EF4444', // error, filler words
-        'aria-text': '#E8EDF5', // primary text
-        'aria-muted': '#6B7A99', // secondary text
+        'aria-void': '#F2EDE4', // page ground, warm cream
+        'aria-base': '#F8F4EF', // raised page background
+        'aria-surface': '#FFFFFF', // cards, panels
+        'aria-border': '#D9CFC4', // hairlines, dividers
+        'aria-blue': '#D4891A', // primary accent, deep gold
+        'aria-pulse': '#F5A623', // glow accent, amber gold
+        'aria-green': '#178A5B', // success, strong scores
+        'aria-amber': '#B07408', // warning, middling scores
+        'aria-red': '#C43D3D', // error, filler words
+        'aria-text': '#1A1F2E', // primary text, navy-charcoal
+        'aria-muted': '#7A6E62', // secondary text
       },
 
       fontFamily: {
@@ -30,21 +31,21 @@ export default {
       },
 
       backgroundImage: {
-        // The signature blue -> cyan sweep used on primary actions and headings.
-        'aria-gradient': 'linear-gradient(135deg, #2D7DD2 0%, #00D4FF 100%)',
+        // The signature amber -> deep gold sweep used on primary actions.
+        'aria-gradient': 'linear-gradient(135deg, #F5A623 0%, #D4891A 100%)',
         'aria-gradient-soft':
-          'linear-gradient(135deg, rgba(45,125,210,0.18) 0%, rgba(0,212,255,0.10) 100%)',
-        // Faint horizon glow for page and hero backgrounds.
+          'linear-gradient(135deg, rgba(245,166,35,0.20) 0%, rgba(212,137,26,0.10) 100%)',
+        // Faint golden-hour horizon for page backgrounds.
         'aria-radial':
-          'radial-gradient(ellipse 80% 50% at 50% -20%, rgba(45,125,210,0.22), transparent 70%)',
+          'radial-gradient(ellipse 80% 50% at 50% -20%, rgba(245,166,35,0.22), transparent 70%)',
       },
 
       boxShadow: {
-        glow: '0 0 20px rgba(0, 212, 255, 0.30)',
-        'glow-sm': '0 0 12px rgba(0, 212, 255, 0.22)',
-        'glow-lg': '0 0 40px rgba(0, 212, 255, 0.35)',
-        'glow-blue': '0 0 20px rgba(45, 125, 210, 0.35)',
-        surface: '0 1px 2px rgba(0,0,0,0.4), 0 8px 24px -12px rgba(0,0,0,0.6)',
+        glow: '0 0 20px rgba(245, 166, 35, 0.30)',
+        'glow-sm': '0 0 12px rgba(245, 166, 35, 0.22)',
+        'glow-lg': '0 0 40px rgba(245, 166, 35, 0.35)',
+        'glow-blue': '0 0 20px rgba(212, 137, 26, 0.35)',
+        surface: '0 1px 2px rgba(27,31,46,0.06), 0 12px 32px -14px rgba(27,75,90,0.20)',
       },
 
       keyframes: {
@@ -53,8 +54,8 @@ export default {
         // element itself would dim the button label to 60% and make a live
         // control read as disabled.
         'pulse-glow': {
-          '0%, 100%': { boxShadow: '0 0 0 0 rgba(0, 212, 255, 0)' },
-          '50%': { boxShadow: '0 0 24px 4px rgba(0, 212, 255, 0.65)' },
+          '0%, 100%': { boxShadow: '0 0 0 0 rgba(245, 166, 35, 0)' },
+          '50%': { boxShadow: '0 0 24px 4px rgba(245, 166, 35, 0.55)' },
         },
         // A single audio bar. Staggering comes from per-bar animation-delay.
         waveform: {

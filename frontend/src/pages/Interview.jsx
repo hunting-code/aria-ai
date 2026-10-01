@@ -358,8 +358,8 @@ export default function Interview() {
   return (
     <div className="min-h-screen bg-aria-void">
       {/* ---- Top bar ------------------------------------------------------ */}
-      <header className="fixed inset-x-0 top-0 z-50 h-14 border-b border-aria-border bg-aria-base/85 backdrop-blur-md">
-        <div className="mx-auto flex h-14 max-w-[1600px] items-center justify-between gap-4 px-4 sm:px-6">
+      <header className="fixed inset-x-0 top-0 z-[60] h-16 border-b border-aria-border bg-aria-base backdrop-blur-md">
+        <div className="mx-auto flex h-16 max-w-[1600px] items-center justify-between gap-4 px-4 sm:px-6">
           <AriaLogo className="shrink-0 scale-90" />
 
           <div className="hidden min-w-0 flex-1 flex-col items-center gap-1 sm:flex">
@@ -539,7 +539,7 @@ export default function Interview() {
                   type="button"
                   onClick={() => setTypedMode((v) => !v)}
                   disabled={audio.isRecording}
-                  className="inline-flex items-center gap-1.5 rounded-md px-2 py-1 text-xs text-aria-muted transition-colors hover:bg-white/5 hover:text-aria-text disabled:opacity-40"
+                  className="inline-flex items-center gap-1.5 rounded-md px-2 py-1 text-xs text-aria-muted transition-colors hover:bg-black/5 hover:text-aria-text disabled:opacity-40"
                 >
                   <Keyboard className="h-3.5 w-3.5" aria-hidden="true" />
                   {typedMode ? 'Use microphone' : 'Type instead'}
@@ -668,7 +668,7 @@ export default function Interview() {
       ) : null}
 
       {/* ---- Bottom bar ---------------------------------------------------- */}
-      <footer className="fixed inset-x-0 bottom-0 z-40 border-t border-aria-border bg-aria-base/85 backdrop-blur-md">
+      <footer className="fixed inset-x-0 bottom-0 z-[60] border-t border-aria-border bg-aria-base/85 backdrop-blur-md">
         <div className="mx-auto flex max-w-[1600px] items-center justify-between gap-3 px-4 py-3 sm:px-6">
           <Button
             variant="ghost"

@@ -82,7 +82,7 @@ export default function Navbar({ onOpenSidebar, showMenuButton = false }) {
 
   const itemClass =
     'flex w-full items-center gap-2.5 px-4 py-2.5 text-sm text-aria-text transition-colors ' +
-    'hover:bg-aria-blue/10 hover:text-white focus-visible:bg-aria-blue/10 focus-visible:outline-none'
+    'hover:bg-aria-blue/10 hover:text-aria-text focus-visible:bg-aria-blue/10 focus-visible:outline-none'
 
   return (
     <header className="fixed inset-x-0 top-0 z-50 h-16">
@@ -94,7 +94,7 @@ export default function Navbar({ onOpenSidebar, showMenuButton = false }) {
               type="button"
               onClick={onOpenSidebar}
               aria-label="Open navigation menu"
-              className="-ml-1 rounded-lg p-2 text-aria-muted transition-colors hover:bg-white/5 hover:text-aria-text lg:hidden"
+              className="-ml-1 rounded-lg p-2 text-aria-muted transition-colors hover:bg-black/5 hover:text-aria-text lg:hidden"
             >
               <Menu className="h-5 w-5" aria-hidden="true" />
             </button>
@@ -129,11 +129,11 @@ export default function Navbar({ onOpenSidebar, showMenuButton = false }) {
             aria-haspopup="menu"
             aria-expanded={open}
             aria-label={`Account menu for ${user?.username ?? 'your account'}`}
-            className="flex items-center gap-2 rounded-full border border-aria-border p-1 pr-2 transition-colors hover:border-aria-blue/60 hover:bg-white/5"
+            className="flex items-center gap-2 rounded-full border border-aria-border p-1 pr-2 transition-colors hover:border-aria-blue/60 hover:bg-black/5"
           >
             <span
               aria-hidden="true"
-              className="grid h-8 w-8 place-items-center rounded-full bg-aria-gradient font-mono text-xs font-bold text-white"
+              className="grid h-8 w-8 place-items-center rounded-full bg-aria-gradient font-mono text-xs font-bold text-aria-text"
             >
               {initialsFor(user)}
             </span>
@@ -167,7 +167,7 @@ export default function Navbar({ onOpenSidebar, showMenuButton = false }) {
                 <User className="h-4 w-4" aria-hidden="true" />
                 Profile
               </Link>
-              <Link to="/history" role="menuitem" className={itemClass} onClick={() => setOpen(false)}>
+              <Link to="/sessions" role="menuitem" className={itemClass} onClick={() => setOpen(false)}>
                 <ClipboardList className="h-4 w-4" aria-hidden="true" />
                 My Sessions
               </Link>

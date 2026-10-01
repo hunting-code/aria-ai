@@ -93,36 +93,35 @@ export default function Landing() {
   }, [])
 
   // ---- Score bars animate from zero when scrolled into view ------------- //
+  // The target lives in a data-width attribute, never in the inline style:
+  // StrictMode runs effects twice in dev, and reading the style back on the
+  // second run would capture the zeroed width as the animation target.
   useEffect(() => {
-    const root = rootRef.current
-    if (!root) return undefined
-    const fills = Array.from(root.querySelectorAll('.sc-fill'))
-    const targets = fills.map((f) => f.style.width)
-    fills.forEach((f) => {
-      f.style.width = '0%'
-    })
-    const timers = []
-    const obs = new IntersectionObserver(
-      (entries) => {
-        entries.forEach((e) => {
-          if (!e.isIntersecting) return
-          const i = fills.indexOf(e.target)
-          timers.push(
-            window.setTimeout(() => {
-              e.target.style.transition = 'width 1.2s ease-out'
-              e.target.style.width = targets[i]
-            }, 100 + i * 90),
-          )
-          obs.unobserve(e.target)
-        })
-      },
-      { threshold: 0.5 },
-    )
-    fills.forEach((f) => obs.observe(f))
-    return () => {
-      obs.disconnect()
-      timers.forEach(window.clearTimeout)
-    }
+    const fills = document.querySelectorAll('.sc-fill')
+
+    const observer = new IntersectionObserver((entries) => {
+      entries.forEach((entry) => {
+        if (entry.isIntersecting) {
+          const el = entry.target
+          const targetWidth = el.getAttribute('data-width')
+          el.style.width = '0%'
+          el.style.transition = 'none'
+
+          requestAnimationFrame(() => {
+            requestAnimationFrame(() => {
+              el.style.transition = 'width 1.2s ease-out'
+              el.style.width = targetWidth + '%'
+            })
+          })
+
+          observer.unobserve(el)
+        }
+      })
+    }, { threshold: 0.3 })
+
+    fills.forEach(el => observer.observe(el))
+
+    return () => observer.disconnect()
   }, [])
 
   // ---- Typing loop in the live panel ------------------------------------ //
@@ -455,7 +454,7 @@ export default function Landing() {
                     <span className={`sc-row-val ${toneClass}`}>{val}/100</span>
                   </div>
                   <div className="sc-track">
-                    <div className={`sc-fill ${toneClass}`} style={{ width: `${val}%` }} />
+                    <div className={`sc-fill ${toneClass}`} data-width={val} />
                   </div>
                 </div>
               ))}

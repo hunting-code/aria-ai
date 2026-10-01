@@ -3,6 +3,7 @@
 // a half-finished setup is never a back-button trap.
 
 import { useCallback, useEffect, useRef, useState } from 'react'
+import { useLocation } from 'react-router-dom'
 import { useNavigate } from 'react-router-dom'
 import { AnimatePresence, motion, useReducedMotion } from 'framer-motion'
 import {
@@ -20,10 +21,11 @@ import {
   User,
   Users,
   Volume2,
+  FileCheck2,
 } from 'lucide-react'
 
 import useAuth from '../hooks/useAuth'
-import { sessionsApi, extractErrorMessage } from '../services/api'
+import { resumeApi, sessionsApi, extractErrorMessage } from '../services/api'
 import { Button, Card, cn } from '../components/ui'
 
 /* ========================================================================== */
@@ -38,7 +40,7 @@ const ROLES = [
     value: 'data_analyst',
     title: 'Data Analyst',
     icon: BarChart3,
-    accent: '#2D7DD2',
+    accent: '#1A6FD4',
     description: 'SQL, Python, visualization, statistical analysis',
     skills: ['Python', 'SQL', 'Tableau', 'Statistics', 'Machine Learning'],
   },
@@ -396,9 +398,24 @@ export default function RoleSelect() {
   const user = useAuth((s) => s.user)
   const reduceMotion = useReducedMotion()
 
+  const location = useLocation()
   const [step, setStep] = useState(1)
   const [direction, setDirection] = useState(1) // 1 forward, -1 back
-  const [role, setRole] = useState(null)
+  // The resume page's "Practice This Role" button arrives with a preselection.
+  const [role, setRole] = useState(location.state?.role ?? null)
+
+  // Resume-aware personalization: banner on step 1, specifics under the pick.
+  const [resume, setResume] = useState(null)
+  useEffect(() => {
+    let live = true
+    resumeApi
+      .myResume()
+      .then((data) => live && setResume(data))
+      .catch(() => {})
+    return () => {
+      live = false
+    }
+  }, [])
   const [difficulty, setDifficulty] = useState('intermediate')
 
   const [nameConfirmed, setNameConfirmed] = useState(false)
@@ -458,15 +475,51 @@ export default function RoleSelect() {
           >
             {/* ---- Step 1: role ------------------------------------------ */}
             {step === 1 ? (
-              <div className="grid gap-4 sm:grid-cols-2">
-                {ROLES.map((r) => (
-                  <RoleCard
-                    key={r.value}
-                    role={r}
-                    selected={role === r.value}
-                    onSelect={() => setRole(r.value)}
-                  />
-                ))}
+              <div>
+                {resume ? (
+                  <div
+                    role="status"
+                    className="mb-4 flex items-center gap-2.5 rounded-xl border border-aria-green/40 bg-aria-green/10 p-3 text-sm text-aria-green"
+                  >
+                    <FileCheck2 className="h-4 w-4 shrink-0" aria-hidden="true" />
+                    <span>
+                      Resume detected - ARIA will personalize your questions based on your
+                      experience
+                    </span>
+                  </div>
+                ) : null}
+                <div className="grid gap-4 sm:grid-cols-2">
+                  {ROLES.map((r) => (
+                    <RoleCard
+                      key={r.value}
+                      role={r}
+                      selected={role === r.value}
+                      onSelect={() => setRole(r.value)}
+                    />
+                  ))}
+                </div>
+                {resume && role ? (
+                  <p className="mt-4 text-sm text-aria-muted">
+                    {(() => {
+                      const parsed = resume.parsed_data ?? {}
+                      const project = parsed.projects?.[0]?.name
+                      const skill = parsed.skills?.technical?.[0]
+                      const bits = [project, skill].filter(Boolean)
+                      const roleTitle = ROLES.find((r) => r.value === role)?.title ?? role
+                      return (
+                        <>
+                          ARIA found <span className="font-semibold text-aria-text">8</span>{' '}
+                          questions specific to your{' '}
+                          <span className="font-semibold text-aria-text">{roleTitle}</span>{' '}
+                          experience.
+                          {bits.length
+                            ? ` Including questions about ${bits.join(' and ')}.`
+                            : ''}
+                        </>
+                      )
+                    })()}
+                  </p>
+                ) : null}
               </div>
             ) : null}
 

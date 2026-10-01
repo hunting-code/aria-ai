@@ -37,7 +37,7 @@ const PAGE_SIZE = 12
 
 const ROLES = [
   { value: 'all', label: 'All', icon: null, accent: null },
-  { value: 'data_analyst', label: 'Data Analyst', icon: BarChart3, accent: '#2D7DD2' },
+  { value: 'data_analyst', label: 'Data Analyst', icon: BarChart3, accent: '#1A6FD4' },
   { value: 'software_engineer', label: 'SWE', icon: Code2, accent: '#A855F7' },
   { value: 'hr', label: 'HR', icon: Users, accent: '#EC4899' },
   { value: 'ai_engineer', label: 'AI Engineer', icon: Brain, accent: '#10B981' },
@@ -87,7 +87,7 @@ function Segmented({ label, options, value, onChange }) {
               'rounded-lg border px-2.5 py-1.5 text-xs font-medium transition-colors',
               'focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-aria-pulse',
               value === o.value
-                ? 'border-aria-blue bg-aria-blue/15 text-white'
+                ? 'border-aria-blue bg-aria-blue/15 text-aria-text'
                 : 'border-aria-border text-aria-muted hover:border-aria-blue/50 hover:text-aria-text',
             )}
           >

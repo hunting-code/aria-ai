@@ -19,8 +19,9 @@ from slowapi.middleware import SlowAPIMiddleware
 from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.orm import Session
 
+from app.api import ai_meet_websocket as meet_ws
 from app.api import websocket as ws
-from app.api.routes import auth, interview, report, session
+from app.api.routes import auth, interview, report, resume, session
 from app.core.config import get_settings
 from app.core.database import check_connection, get_db, init_db
 from app.core.limiter import limiter
@@ -177,6 +178,7 @@ async def unhandled_exception_handler(request: Request, exc: Exception) -> JSONR
 app.include_router(auth.router, prefix=settings.API_PREFIX)
 app.include_router(interview.router, prefix=settings.API_PREFIX)
 app.include_router(session.router, prefix=settings.API_PREFIX)
+app.include_router(resume.router, prefix=settings.API_PREFIX)
 app.include_router(report.router, prefix=settings.API_PREFIX)
 
 
@@ -222,3 +224,18 @@ async def interview_websocket_route(
     interview does not hold one open.
     """
     await ws.interview_websocket(websocket, session_id, db)
+
+
+@app.websocket("/ws/meet/{session_id}")
+async def ai_meet_websocket_route(
+    websocket: WebSocket,
+    session_id: str,
+    db: Session = Depends(get_db),
+) -> None:
+    """AI Meet channel: the formal, phased interview.
+
+    Separate from /ws/{session_id} because the state machines differ - this one
+    tracks phases, transitions and a spoken debrief rather than a flat question
+    list. Both share the connection manager in app.api.websocket.
+    """
+    await meet_ws.ai_meet_websocket(websocket, session_id, db)

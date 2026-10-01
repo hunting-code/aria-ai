@@ -53,10 +53,12 @@ export function clearToken() {
 /* -------------------------------------------------------------------------- */
 /* Instance                                                                   */
 /* -------------------------------------------------------------------------- */
+// No default Content-Type: axios infers it from the body (JSON for plain
+// objects, multipart/form-data WITH the boundary for FormData). A global JSON
+// default would override that and multipart uploads would arrive unreadable.
 const api = axios.create({
   baseURL: API_BASE_URL,
   timeout: 30000,
-  headers: { 'Content-Type': 'application/json' },
 })
 
 // Attaches the bearer token to every outgoing request.
@@ -205,6 +207,65 @@ async function cached(key, loader, { force = false } = {}) {
   const value = await loader()
   cacheSet(key, value)
   return value
+}
+
+/* -------------------------------------------------------------------------- */
+/* Resume                                                                     */
+/* -------------------------------------------------------------------------- */
+export const resumeApi = {
+  /** POST /api/resume/upload - multipart. Full analysis in one round trip. */
+  upload: (file) => {
+    const form = new FormData()
+    form.append('file', file) // key must be exactly "file" - matches the FastAPI param
+    return api
+      .post(`${API_PREFIX}/resume/upload`, form, {
+        headers: { 'Content-Type': 'multipart/form-data' },
+        // Three model calls run server-side; the default 30s cuts it too close.
+        timeout: 120000,
+      })
+      .then((r) => {
+        cacheClear('resume:')
+        return r.data
+      })
+  },
+
+  /**
+   * GET /api/resume/my-resume. Resolves to null when nothing is uploaded,
+   * so "no resume yet" is a state rather than an error path.
+   */
+  myResume: ({ force = false } = {}) =>
+    cached(
+      'resume:mine',
+      () =>
+        api
+          .get(`${API_PREFIX}/resume/my-resume`)
+          .then((r) => r.data)
+          .catch((error) => {
+            if (error?.response?.status === 404) return null
+            throw error
+          }),
+      { force },
+    ),
+
+  /** GET /api/resume/questions/:role - resume-personalized (or bank fallback). */
+  questions: (jobRole, { force = false } = {}) =>
+    cached(
+      `resume:questions:${jobRole}`,
+      () => api.get(`${API_PREFIX}/resume/questions/${jobRole}`).then((r) => r.data),
+      { force },
+    ),
+
+  /** DELETE /api/resume/my-resume. */
+  remove: () =>
+    api.delete(`${API_PREFIX}/resume/my-resume`).then(() => {
+      cacheClear('resume:')
+    }),
+
+  /** POST /api/resume/practice - score one typed answer to one question. */
+  practice: ({ question, answer, job_role }) =>
+    api
+      .post(`${API_PREFIX}/resume/practice`, { question, answer, job_role })
+      .then((r) => r.data),
 }
 
 /* -------------------------------------------------------------------------- */

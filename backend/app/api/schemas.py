@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import uuid
 from datetime import datetime
+from enum import Enum
 
 from pydantic import BaseModel, ConfigDict, EmailStr, Field, field_validator
 
@@ -150,6 +151,13 @@ class SessionStats(BaseModel):
     tag_performance: dict[str, float] = Field(default_factory=dict)
 
 
+class SessionType(str, Enum):
+    """Which interview experience to run."""
+
+    PRACTICE = "practice"
+    AI_MEET = "ai_meet"
+
+
 class SessionCreate(BaseModel):
     """Start a new interview. The owner comes from the bearer token."""
 
@@ -157,6 +165,10 @@ class SessionCreate(BaseModel):
     difficulty: Difficulty = Field(
         default=Difficulty.INTERMEDIATE, examples=[Difficulty.INTERMEDIATE]
     )
+    session_type: SessionType = Field(default=SessionType.PRACTICE)
+    # AI Meet only: link the candidate's resume so ARIA can interview from it.
+    # Ignored for practice sessions. The resume must belong to the caller.
+    resume_id: uuid.UUID | None = None
 
 
 class SessionSummary(ORMModel):
@@ -171,6 +183,9 @@ class SessionSummary(ORMModel):
     id: uuid.UUID
     job_role: str
     difficulty: str
+    # History and dashboard cards badge an AI Meet differently from practice.
+    session_type: str = "practice"
+    resume_used: bool = False
     coach_mode: bool = True
     status: SessionStatus
     overall_score: float | None = None
@@ -191,6 +206,13 @@ class SessionResponse(SessionSummary):
     user_id: uuid.UUID
     final_feedback: dict | None = None
     answers: list["AnswerResponse"] = Field(default_factory=list)
+
+    # ---- AI Meet ----
+    # Null on a practice session; populated once a meet has been completed.
+    meet_phase: str | None = None
+    phase_scores: dict | None = None
+    verbal_debrief: str | None = None
+    career_guidance: dict | None = None
 
 
 # --------------------------------------------------------------------------- #

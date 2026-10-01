@@ -51,17 +51,17 @@ export default function FillerAttention({ fillerHistory = {}, className }) {
           <div className="mt-3 h-24 w-full max-w-xs">
             <ResponsiveContainer width="100%" height="100%">
               <BarChart data={chartData} margin={{ top: 4, right: 4, left: -28, bottom: 0 }}>
-                <XAxis dataKey="label" stroke="#6B7A99" tick={{ fill: '#6B7A99', fontSize: 10 }} tickLine={false} axisLine={false} />
+                <XAxis dataKey="label" stroke="#7A6E62" tick={{ fill: '#7A6E62', fontSize: 10 }} tickLine={false} axisLine={false} />
                 <Tooltip
-                  contentStyle={{ background: '#161B27', border: '1px solid #1E2D40', borderRadius: 8, fontSize: 11 }}
-                  labelStyle={{ color: '#E8EDF5' }}
+                  contentStyle={{ background: '#FFFFFF', border: '1px solid #D9CFC4', borderRadius: 8, fontSize: 11 }}
+                  labelStyle={{ color: '#1A1F2E' }}
                   cursor={{ fill: 'rgba(245,158,11,0.08)' }}
                 />
                 <Bar dataKey="count" name={worst.word} radius={[3, 3, 0, 0]} maxBarSize={28}>
                   {chartData.map((d, i) => (
                     <Cell
                       key={i}
-                      fill={d.count > RECOMMENDED_MAX ? '#F59E0B' : '#10B981'}
+                      fill={d.count > RECOMMENDED_MAX ? '#B07408' : '#178A5B'}
                     />
                   ))}
                 </Bar>

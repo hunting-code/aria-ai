@@ -17,6 +17,7 @@ from sqlalchemy import (
     Index,
     Integer,
     String,
+    Text,
     Uuid,
     func,
     text,
@@ -90,6 +91,25 @@ class InterviewSession(Base):
         server_default=SessionStatus.ACTIVE.value,
         index=True,
     )
+
+    # ---- AI Meet mode ----
+    # "practice" is the classic mode; "ai_meet" is the formal phased interview.
+    session_type: Mapped[str] = mapped_column(
+        String(20), nullable=False, default="practice", server_default="practice"
+    )
+    # Current phase while an ai_meet session is live; resumes pick up here.
+    # warmup | background | technical | behavioral | wrap_up
+    meet_phase: Mapped[str | None] = mapped_column(String(20), nullable=True)
+    # Whether the interviewer had the candidate's resume in front of it.
+    resume_used: Mapped[bool] = mapped_column(
+        Boolean, nullable=False, default=False, server_default=text("false")
+    )
+    # {"warmup": {"score": float, "notes": str}, ...} - written at completion.
+    phase_scores: Mapped[dict | None] = mapped_column(JSONDict, nullable=True)
+    # The closing assessment ARIA reads aloud at the end of an AI Meet.
+    verbal_debrief: Mapped[str | None] = mapped_column(Text, nullable=True)
+    # Structured career guidance generated after an AI Meet completes.
+    career_guidance: Mapped[dict | None] = mapped_column(JSONDict, nullable=True)
 
     # ---- Aggregate scores: null until the interview is scored ----
     overall_score: Mapped[float | None] = mapped_column(Float, nullable=True)

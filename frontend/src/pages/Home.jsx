@@ -28,12 +28,14 @@ import {
   TrendingUp,
   Trophy,
   Users,
+  FileText,
+  UploadCloud,
 } from 'lucide-react'
 
 import useAuth from '../hooks/useAuth'
-import { sessionsApi, extractErrorMessage } from '../services/api'
+import { resumeApi, sessionsApi, extractErrorMessage } from '../services/api'
 import StreakCard from '../components/dashboard/StreakCard'
-import { Badge, Button, Card, cn } from '../components/ui'
+import { Badge, Button, Card, ScoreRing, cn } from '../components/ui'
 import { TONE_TEXT, scoreTone } from '../components/ui/scoreColor'
 
 /* ========================================================================== */
@@ -286,13 +288,13 @@ function GrowingChartArt() {
       >
         <path
           d="M8 104 L44 88 L80 92 L116 62 L152 38 L184 14"
-          stroke="#00D4FF"
+          stroke="#F5A623"
           strokeWidth="2"
           strokeLinecap="round"
           strokeLinejoin="round"
           opacity="0.85"
         />
-        <circle cx="184" cy="14" r="4" fill="#00D4FF" />
+        <circle cx="184" cy="14" r="4" fill="#F5A623" />
       </svg>
     </div>
   )
@@ -352,6 +354,19 @@ export default function Home() {
   const chartData = useMemo(() => buildChartData(sessions), [sessions])
   const recent = useMemo(() => sessions.slice(0, 5), [sessions])
   const tip = useMemo(() => tipOfTheDay(), [])
+
+  // Resume analysis summary - null means none uploaded, undefined still loading.
+  const [resume, setResume] = useState(undefined)
+  useEffect(() => {
+    let live = true
+    resumeApi
+      .myResume()
+      .then((data) => live && setResume(data))
+      .catch(() => live && setResume(null))
+    return () => {
+      live = false
+    }
+  }, [])
 
   const firstName = user?.full_name?.split(' ')[0] || user?.username || 'there'
 
@@ -480,35 +495,35 @@ export default function Home() {
                   <AreaChart data={chartData} margin={{ top: 8, right: 8, left: -20, bottom: 0 }}>
                     <defs>
                       <linearGradient id="scoreFill" x1="0" y1="0" x2="0" y2="1">
-                        <stop offset="0%" stopColor="#2D7DD2" stopOpacity={0.45} />
-                        <stop offset="100%" stopColor="#2D7DD2" stopOpacity={0} />
+                        <stop offset="0%" stopColor="#D4891A" stopOpacity={0.45} />
+                        <stop offset="100%" stopColor="#D4891A" stopOpacity={0} />
                       </linearGradient>
                     </defs>
-                    <CartesianGrid stroke="#1E2D40" strokeDasharray="3 3" vertical={false} />
+                    <CartesianGrid stroke="#D9CFC4" strokeDasharray="3 3" vertical={false} />
                     <XAxis
                       dataKey="date"
-                      stroke="#6B7A99"
-                      tick={{ fill: '#6B7A99', fontSize: 12 }}
+                      stroke="#7A6E62"
+                      tick={{ fill: '#7A6E62', fontSize: 12 }}
                       tickLine={false}
-                      axisLine={{ stroke: '#1E2D40' }}
+                      axisLine={{ stroke: '#D9CFC4' }}
                     />
                     <YAxis
                       domain={[0, 100]}
                       ticks={[0, 25, 50, 75, 100]}
-                      stroke="#6B7A99"
-                      tick={{ fill: '#6B7A99', fontSize: 12 }}
+                      stroke="#7A6E62"
+                      tick={{ fill: '#7A6E62', fontSize: 12 }}
                       tickLine={false}
                       axisLine={false}
                     />
-                    <Tooltip content={<ChartTooltip />} cursor={{ stroke: '#00D4FF', strokeWidth: 1 }} />
+                    <Tooltip content={<ChartTooltip />} cursor={{ stroke: '#F5A623', strokeWidth: 1 }} />
                     <Area
                       type="monotone"
                       dataKey="score"
-                      stroke="#2D7DD2"
+                      stroke="#D4891A"
                       strokeWidth={2.5}
                       fill="url(#scoreFill)"
-                      dot={{ fill: '#00D4FF', r: 3, strokeWidth: 0 }}
-                      activeDot={{ r: 5, fill: '#00D4FF' }}
+                      dot={{ fill: '#F5A623', r: 3, strokeWidth: 0 }}
+                      activeDot={{ r: 5, fill: '#F5A623' }}
                       name="Overall score"
                     />
                   </AreaChart>
@@ -522,7 +537,7 @@ export default function Home() {
             <div className="mb-4 flex items-center justify-between gap-4">
               <h2 className="font-display text-lg font-semibold">Recent Sessions</h2>
               <Link
-                to="/history"
+                to="/sessions"
                 className="text-sm font-medium text-aria-pulse underline-offset-4 hover:underline"
               >
                 View All
@@ -573,7 +588,7 @@ export default function Home() {
                       return (
                         <tr
                           key={s.id}
-                          className="border-b border-aria-border/60 transition-colors last:border-0 hover:bg-white/5"
+                          className="border-b border-aria-border/60 transition-colors last:border-0 hover:bg-black/5"
                         >
                           <td className="py-3 pr-4">
                             <span className="inline-flex items-center gap-2.5">
@@ -633,7 +648,59 @@ export default function Home() {
         </div>
 
         {/* ---- 5. Tips panel --------------------------------------------- */}
-        <aside className="min-w-0" aria-label="Interview tip">
+        <aside className="min-w-0 space-y-6" aria-label="Resume and interview tip">
+          {/* ---- Resume summary ------------------------------------------ */}
+          {resume === undefined ? null : resume ? (
+            <Card padding="md" className="animate-slide-up" style={{ animationDelay: '0.4s' }}>
+              <div className="flex items-center gap-4">
+                <ScoreRing value={resume.resume_score} size="sm" animate={false} />
+                <div className="min-w-0">
+                  <p className="flex items-center gap-1.5 text-sm font-semibold">
+                    <FileText className="h-4 w-4 text-aria-blue" aria-hidden="true" />
+                    Resume Score
+                  </p>
+                  <p className="mt-0.5 text-xs text-aria-muted">
+                    Last analysed{' '}
+                    {new Date(resume.last_analysed_at).toLocaleDateString(undefined, {
+                      day: 'numeric',
+                      month: 'short',
+                    })}
+                  </p>
+                </div>
+              </div>
+              {resume.score_breakdown?.critical_issues?.[0] ? (
+                <p className="mt-3 text-xs leading-relaxed text-aria-muted">
+                  <span className="font-semibold text-aria-amber">Top issue:</span>{' '}
+                  {resume.score_breakdown.critical_issues[0]}
+                </p>
+              ) : null}
+              <Link
+                to="/resume"
+                className="mt-3 inline-flex items-center gap-1 text-sm font-medium text-aria-blue hover:underline"
+              >
+                View Full Analysis <ArrowRight className="h-3.5 w-3.5" aria-hidden="true" />
+              </Link>
+            </Card>
+          ) : (
+            <Card padding="md" glow className="animate-slide-up" style={{ animationDelay: '0.4s' }}>
+              <div className="mb-2 flex items-center gap-2">
+                <UploadCloud className="h-4 w-4 text-aria-blue" aria-hidden="true" />
+                <h2 className="font-display text-sm font-semibold uppercase tracking-wider text-aria-muted">
+                  Personalize ARIA
+                </h2>
+              </div>
+              <p className="text-sm font-medium">
+                Upload your resume to unlock personalized interview questions
+              </p>
+              <p className="mt-1 text-xs leading-relaxed text-aria-muted">
+                ARIA will generate questions from your actual projects and experience.
+              </p>
+              <Button size="sm" className="mt-3 w-full" onClick={() => navigate('/resume')}>
+                Upload Resume
+              </Button>
+            </Card>
+          )}
+
           <Card
             padding="md"
             glow

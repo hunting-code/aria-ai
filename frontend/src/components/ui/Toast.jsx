@@ -40,7 +40,7 @@ function Toast({ toast }) {
         type="button"
         onClick={() => dismiss(toast.id)}
         aria-label="Dismiss notification"
-        className="-m-1 rounded-md p-1 text-aria-muted transition-colors hover:bg-white/5 hover:text-aria-text"
+        className="-m-1 rounded-md p-1 text-aria-muted transition-colors hover:bg-black/5 hover:text-aria-text"
       >
         <X className="h-4 w-4" aria-hidden="true" />
       </button>

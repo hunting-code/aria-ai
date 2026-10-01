@@ -570,28 +570,45 @@ class LLMService:
         role: str,
         difficulty: str = "intermediate",
         mode: str = MODE_COACH,
+        system_prompt_override: str | None = None,
     ) -> AsyncGenerator[str, None]:
         """Stream the interviewer's reply to an answer, token by token.
 
         `conversation_history` is a list of {"role", "content"} turns excluding
         the system prompt, which is rebuilt here so a prompt change takes effect
         on the next turn rather than the next session.
+
+        AI Meet passes `system_prompt_override` (its phased interviewer persona)
+        and puts a director note in `transcript`; the answer itself is already
+        the last turn of the history, so it is not restated as a metrics block.
         """
         filler_data = filler_data or {}
-        metrics = self._format_metrics(filler_data, wpm)
-        user_turn = (
-            f"The candidate answered:\n\"\"\"\n{transcript.strip() or '(silence)'}\n\"\"\"\n\n"
-            f"Speech metrics for this answer: {metrics}\n\n"
-            "Respond as the interviewer. Reference something specific they said."
-        )
+        is_directed = system_prompt_override is not None
+
+        if is_directed:
+            user_turn = transcript
+        else:
+            metrics = self._format_metrics(filler_data, wpm)
+            user_turn = (
+                f"The candidate answered:\n\"\"\"\n{transcript.strip() or '(silence)'}\n\"\"\"\n\n"
+                f"Speech metrics for this answer: {metrics}\n\n"
+                "Respond as the interviewer. Reference something specific they said."
+            )
 
         if not self.is_configured:
+            if is_directed:
+                yield "The AI service is not configured."
+                return
             for chunk in self._offline_feedback(transcript, filler_data, wpm):
                 yield chunk
             return
 
         messages = [
-            {"role": "system", "content": build_system_prompt(role, difficulty, mode)},
+            {
+                "role": "system",
+                "content": system_prompt_override
+                or build_system_prompt(role, difficulty, mode),
+            },
             *conversation_history,
             {"role": "user", "content": user_turn},
         ]
@@ -864,3 +881,233 @@ __all__ = [
     "HR_QUESTIONS",
     "AI_ENGINEER_QUESTIONS",
 ]
+
+
+# --------------------------------------------------------------------------- #
+# AI Meet: the formal, phased interview mode
+# --------------------------------------------------------------------------- #
+AI_MEET_PHASES: Final[dict[str, dict[str, Any]]] = {
+    "warmup": {
+        "name": "Warm-up",
+        "description": "Introductory questions to make the candidate comfortable",
+        "question_count": 2,
+        "time_per_answer": 60,
+    },
+    "background": {
+        "name": "Background",
+        "description": "Resume-specific questions about experience and projects",
+        "question_count": 3,
+        "time_per_answer": 120,
+    },
+    "technical": {
+        "name": "Technical",
+        "description": "Role-specific technical depth questions",
+        "question_count": 4,
+        "time_per_answer": 180,
+    },
+    "behavioral": {
+        "name": "Behavioral",
+        "description": "Situational and STAR-method questions",
+        "question_count": 2,
+        "time_per_answer": 120,
+    },
+    "wrap_up": {
+        "name": "Wrap-up",
+        "description": "Closing questions and candidate questions",
+        "question_count": 1,
+        "time_per_answer": 60,
+    },
+}
+
+# The phases in interview order; wrap_up ends the meet.
+AI_MEET_PHASE_ORDER: Final[tuple[str, ...]] = (
+    "warmup", "background", "technical", "behavioral", "wrap_up",
+)
+
+PHASE_TRANSITIONS: Final[list[tuple[str, str]]] = [
+    ("warmup", "Great, thanks for that. Let's move into your background."),
+    ("background", "Good. Now I'd like to get into some technical areas."),
+    ("technical", "Excellent. Let's shift to some behavioral questions."),
+    ("behavioral", "Almost done. Just a couple more things before we wrap up."),
+]
+
+
+def build_ai_meet_system_prompt(
+    job_role: str, candidate_name: str, resume_data: dict | None = None
+) -> str:
+    """The interviewer persona for a formal AI Meet session."""
+    role_title = {
+        "data_analyst": "Data Analyst",
+        "software_engineer": "Software Engineer",
+        "hr": "Human Resources",
+        "ai_engineer": "AI Engineer",
+    }.get(job_role, job_role)
+
+    base = f"""You are ARIA, a professional interviewer at a top tech company.
+You are conducting a formal job interview for the position of {role_title}.
+The candidate's name is {candidate_name}.
+
+Interview structure you will follow:
+Phase 1 - Warm-up (2 questions): Light introductory questions. Be friendly.
+Phase 2 - Background (3 questions): Deep dive into their resume and experience.
+Phase 3 - Technical (4 questions): Role-specific technical questions.
+Phase 4 - Behavioral (2 questions): Situational questions using STAR method.
+Phase 5 - Wrap-up (1 question): Ask if they have questions, close warmly.
+
+Your interview style:
+- Professional but human - not robotic
+- Ask ONE question at a time, always
+- Listen carefully - your follow-up must reference what they just said
+- When moving phases: use the transition phrase naturally, do not announce phases
+- If an answer is too vague: ask one clarifying follow-up before moving on
+- If an answer is excellent: acknowledge specifically what was good, then continue
+- Never say "great question" to their answers - it sounds fake
+- Keep your responses between 2-4 sentences (question + brief acknowledgment)
+
+{ANSWER_RUBRIC}
+"""
+
+    if resume_data:
+        projects = resume_data.get("projects") or []
+        skills = (resume_data.get("skills") or {}).get("technical") or []
+        top_project = projects[0].get("name") if projects and isinstance(projects[0], dict) else None
+        base += f"""
+You have read their resume before this interview.
+Resume highlights:
+- Experience: {json.dumps(resume_data.get('experience', []), ensure_ascii=False)}
+- Projects: {json.dumps(projects, ensure_ascii=False)}
+- Skills: {json.dumps(resume_data.get('skills', {}), ensure_ascii=False)}
+- Education: {json.dumps(resume_data.get('education', []), ensure_ascii=False)}
+
+In the Background phase, ask specifically about:
+- Their most recent project: {top_project or 'their main project'}
+- A skill they listed: {skills[0] if skills else 'their primary skill'}
+Reference their actual experience - do not ask generic questions.
+"""
+    return base
+
+
+def get_ai_meet_opening(candidate_name: str, job_role: str) -> str:
+    """The exact script ARIA speaks at the start of an AI Meet."""
+    role_title = {
+        "data_analyst": "Data Analyst",
+        "software_engineer": "Software Engineer",
+        "hr": "Human Resources",
+        "ai_engineer": "AI Engineer",
+    }.get(job_role, job_role)
+    return (
+        f"Hi {candidate_name}, welcome. I'm ARIA, and I'll be conducting "
+        f"your {role_title} interview today. We'll spend about 30-35 minutes "
+        "together. I'll ask you questions across a few different areas - "
+        "just answer naturally, the way you would in a real interview. "
+        "There's no need to rush. Ready to begin? Let's start."
+    )
+
+
+def get_phase_transition(from_phase: str, to_phase: str) -> str:
+    """The natural bridge line spoken when the interview changes phase."""
+    for phase, line in PHASE_TRANSITIONS:
+        if phase == from_phase:
+            return line
+    return "Let's keep going."
+
+
+def generate_wrap_up_question(candidate_name: str) -> str:
+    """The real-interview 'any questions?' moment."""
+    return (
+        f"Before we finish, {candidate_name} - do you have any "
+        "questions for me about the role or what we look for?"
+    )
+
+
+async def generate_verbal_debrief(
+    session_data: dict, answers: list[dict], candidate_name: str
+) -> str:
+    """The 150-200 word closing assessment ARIA reads aloud."""
+    system = (
+        "You are ARIA, wrapping up a formal mock interview. Write the debrief you "
+        "will SPEAK to the candidate, in the first person, 150-200 words. Structure: "
+        "thank them by name; your honest assessment; their strongest area with a "
+        "specific example from their answers; their weakest area, stated kindly but "
+        "plainly; the ONE thing to work on before a real interview; a short, genuine "
+        "encouragement; then 'Overall score: X out of 100. Good luck with your "
+        "preparation.' Plain spoken prose only - no headings, no bullet points, no "
+        "markdown."
+    )
+    user = (
+        f"Candidate name: {candidate_name}\n"
+        f"Role: {session_data.get('job_role')}\n"
+        f"Overall score: {session_data.get('overall_score')}\n"
+        f"Phase scores: {json.dumps(session_data.get('phase_scores') or {})}\n\n"
+        f"Their answers (question, answer, verdict):\n{json.dumps(answers, ensure_ascii=False)[:12000]}"
+    )
+    try:
+        response = await llm_service.client.chat.completions.create(
+            model=llm_service.model,
+            messages=[{"role": "system", "content": system}, {"role": "user", "content": user}],
+            temperature=0.5,
+            max_tokens=900,
+            **llm_service._reasoning_kwargs(),
+        )
+        text = (response.choices[0].message.content or "").strip()
+        if text:
+            return text
+    except PROVIDER_ERRORS:
+        logger.exception("Debrief generation failed; using the fallback")
+    score = session_data.get("overall_score")
+    return (
+        f"{candidate_name}, thank you for your time today. You worked through every "
+        "phase of the interview, and that alone is more preparation than most people "
+        "do. Review your per-phase scores for where to focus next"
+        + (f" - overall you scored {round(score)} out of 100." if score is not None else ".")
+        + " Good luck with your preparation."
+    )
+
+
+async def generate_career_guidance(
+    session_data: dict, answers: list[dict], resume_data: dict | None = None
+) -> dict[str, Any]:
+    """Structured post-interview career guidance for an AI Meet session."""
+    system = (
+        "You are a senior career coach reviewing a completed mock interview. "
+        "Return JSON with exactly these keys:\n"
+        '{"summary": "2-3 sentence honest overview",\n'
+        ' "readiness_verdict": "ready|almost_ready|needs_work",\n'
+        ' "strengths": ["3 specific strengths, citing their answers"],\n'
+        ' "growth_areas": ["3 specific gaps, citing their answers"],\n'
+        ' "next_steps": ["4 concrete actions, most impactful first"],\n'
+        ' "recommended_resources": [{"title": "string", "why": "string"}],\n'
+        ' "target_role_advice": "one paragraph on how close they are to the role and what would close the gap"}'
+    )
+    user = (
+        f"Role interviewed for: {session_data.get('job_role')}\n"
+        f"Overall score: {session_data.get('overall_score')}\n"
+        f"Phase scores: {json.dumps(session_data.get('phase_scores') or {})}\n"
+        + (f"Resume summary: {json.dumps(resume_data, ensure_ascii=False)[:6000]}\n" if resume_data else "")
+        + f"\nAnswers:\n{json.dumps(answers, ensure_ascii=False)[:12000]}"
+    )
+    try:
+        response = await llm_service.client.chat.completions.create(
+            model=llm_service.model,
+            messages=[{"role": "system", "content": system}, {"role": "user", "content": user}],
+            response_format={"type": "json_object"},
+            temperature=0.3,
+            max_tokens=1800,
+            **llm_service._reasoning_kwargs(),
+        )
+        data = json.loads(response.choices[0].message.content or "{}")
+    except (json.JSONDecodeError, *PROVIDER_ERRORS):
+        logger.exception("Career guidance generation failed")
+        return {
+            "summary": "Guidance could not be generated for this session.",
+            "readiness_verdict": None,
+            "strengths": [], "growth_areas": [], "next_steps": [],
+            "recommended_resources": [], "target_role_advice": None,
+        }
+    for key, default in (
+        ("summary", ""), ("readiness_verdict", None), ("strengths", []),
+        ("growth_areas", []), ("next_steps", []), ("recommended_resources", []),
+        ("target_role_advice", None),
+    ):
+        data.setdefault(key, default)
+    return data

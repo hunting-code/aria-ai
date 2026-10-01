@@ -304,7 +304,7 @@ export default function Report() {
         {/* Header */}
         <header className="flex flex-wrap items-start justify-between gap-4 pb-5" style={{ borderBottom: `1px solid ${RULE}` }}>
           <div>
-            <p className="font-display text-2xl font-bold" style={{ color: '#2D7DD2' }}>
+            <p className="font-display text-2xl font-bold" style={{ color: '#B07408' }}>
               ARIA AI
             </p>
             <h1 className="mt-1 font-display text-xl font-semibold">
@@ -400,7 +400,7 @@ export default function Report() {
                       {'  |  '}Fillers {a.filler_count ?? 0}
                     </p>
                     {a.ai_feedback ? (
-                      <p className="mt-1.5 text-sm leading-relaxed" style={{ color: '#2D7DD2' }}>
+                      <p className="mt-1.5 text-sm leading-relaxed" style={{ color: '#B07408' }}>
                         {a.ai_feedback}
                       </p>
                     ) : null}
