@@ -7,6 +7,7 @@ Run locally with:
 from __future__ import annotations
 
 import logging
+import uuid
 from contextlib import asynccontextmanager
 from typing import Any
 
@@ -21,7 +22,7 @@ from sqlalchemy.orm import Session
 
 from app.api import ai_meet_websocket as meet_ws
 from app.api import websocket as ws
-from app.api.routes import auth, career, interview, report, resume, session, tts
+from app.api.routes import admin, auth, career, interview, report, resume, session, tts
 from app.core.config import get_settings
 from app.core.database import check_connection, get_db, init_db
 from app.core.limiter import limiter
@@ -154,10 +155,35 @@ async def validation_exception_handler(
 async def sqlalchemy_exception_handler(
     request: Request, exc: SQLAlchemyError
 ) -> JSONResponse:
-    logger.exception("Database error on %s %s", request.method, request.url.path)
+    """Log the full traceback; return something the caller can act on.
+
+    The client gets a short error id that also appears in the log line, so a
+    report of "it returned 503" can be traced to one exact traceback instead of
+    guessing. Outside production the cause is included in the response too -
+    in production it is not, because database errors quote table and column
+    names and sometimes the values that broke them.
+    """
+    error_id = uuid.uuid4().hex[:8]
+    # `orig` carries the driver's own error, which is the part that names the
+    # missing column or constraint. The generic SQLAlchemy wrapper does not.
+    cause = getattr(exc, "orig", None) or exc
+    logger.exception(
+        "Database error [%s] on %s %s: %s: %s",
+        error_id,
+        request.method,
+        request.url.path,
+        type(cause).__name__,
+        str(cause)[:500],
+    )
+    body: dict[str, Any] = {
+        "detail": "A database error occurred. Please try again.",
+        "error_id": error_id,
+    }
+    if not settings.is_production:
+        body["error_type"] = type(cause).__name__
+        body["error"] = str(cause)[:500]
     return JSONResponse(
-        status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-        content={"detail": "A database error occurred. Please try again."},
+        status_code=status.HTTP_503_SERVICE_UNAVAILABLE, content=body
     )
 
 
@@ -181,6 +207,7 @@ app.include_router(session.router, prefix=settings.API_PREFIX)
 app.include_router(resume.router, prefix=settings.API_PREFIX)
 app.include_router(career.router, prefix=settings.API_PREFIX)
 app.include_router(tts.router, prefix=settings.API_PREFIX)
+app.include_router(admin.router, prefix=settings.API_PREFIX)
 app.include_router(report.router, prefix=settings.API_PREFIX)
 
 

@@ -57,6 +57,11 @@ class Settings(BaseSettings):
     OPENAI_API_KEY: str = ""
     OPENAI_MODEL: str = "gpt-4o-mini"
 
+    # ---- Operations ----
+    # Shared secret for /api/admin/*. Unset means those endpoints are disabled,
+    # which is the correct default: an absent secret must never mean "open".
+    ADMIN_TOKEN: str = ""
+
     # ---- Speech synthesis (optional) ----
     # ElevenLabs gives ARIA a human-sounding voice. Entirely optional: without
     # it the browser's own speech synthesis is used instead.

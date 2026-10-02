@@ -59,6 +59,7 @@ Two things to check before moving on:
    | `ENVIRONMENT` | `production` |
    | `CORS_ORIGINS` | your Vercel URL — fill in after step 3 |
    | `ELEVENLABS_API_KEY` | optional — see the note below |
+   | `ADMIN_TOKEN` | a long random string; enables /api/admin/* |
 
    **On ElevenLabs:** the free tier is 10,000 characters a month, and one
    complete AI Meet speaks about 4,100 — roughly **two interviews**. Leave the
@@ -83,6 +84,29 @@ Two things to check before moving on:
    `"database": "connected"`.
 
 Tables are created automatically on first boot.
+
+### After any deploy that changed a model
+
+`create_all` only adds TABLES. It will not add a column to a table that already
+exists, so a model change shipped after the first deploy leaves the database
+behind - and the symptom is confusing: `/health` still says `"connected"`, but
+every read of the affected table returns 503.
+
+Set `ADMIN_TOKEN` in the Render environment to a long random string, then after
+each deploy:
+
+```bash
+curl -X POST https://YOUR-SERVICE.onrender.com/api/admin/init-db \
+  -H "X-Admin-Token: YOUR_ADMIN_TOKEN"
+```
+
+It is additive only - it never drops or retypes a column - and safe to repeat.
+To look without changing anything:
+
+```bash
+curl https://YOUR-SERVICE.onrender.com/api/admin/schema \
+  -H "X-Admin-Token: YOUR_ADMIN_TOKEN"
+```
 
 ### The free tier sleeps
 
