@@ -262,6 +262,10 @@ class SessionResponse(SessionSummary):
     final_feedback: dict | None = None
     answers: list["AnswerResponse"] = Field(default_factory=list)
 
+    # ---- Post-interview analysis ----
+    failure_dna: dict | None = None
+    recruiter_replay: dict | None = None
+
     # ---- Proctoring ----
     integrity_score: float | None = None
     proctoring_data: dict | None = None

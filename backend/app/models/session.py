@@ -111,6 +111,12 @@ class InterviewSession(Base):
     # Structured career guidance generated after an AI Meet completes.
     career_guidance: Mapped[dict | None] = mapped_column(JSONDict, nullable=True)
 
+    # ---- Post-interview analysis ----
+    # Root cause behind the weak answers, and a recruiter's read of the whole
+    # session. Both are written at completion; null until then.
+    failure_dna: Mapped[dict | None] = mapped_column(JSONDict, nullable=True)
+    recruiter_replay: Mapped[dict | None] = mapped_column(JSONDict, nullable=True)
+
     # ---- Proctoring ----
     # 0-100 focus signal from the browser (tab switches, gaze). Null when the
     # candidate's browser could not measure it - absence is not a red flag.

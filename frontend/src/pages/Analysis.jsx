@@ -28,6 +28,8 @@ import {
 
 import { sessionsApi, extractErrorMessage } from '../services/api'
 import { Badge, Button, Card, LoadingSpinner, ScoreRing, cn } from '../components/ui'
+import FailureDNA from '../components/analysis/FailureDNA'
+import RecruiterReplay from '../components/analysis/RecruiterReplay'
 import QuestionBreakdown from '../components/interview/QuestionBreakdown'
 import FillerAttention from '../components/dashboard/FillerAttention'
 import useToast from '../store/toastStore'
@@ -379,7 +381,18 @@ export default function Analysis() {
             </p>
           ) : null}
         </Card>
-      ) : null}
+      ) : null}      <FailureDNA
+        data={session?.failure_dna}
+        className="animate-slide-up"
+        style={stagger(4)}
+      />
+      <RecruiterReplay
+        data={session?.recruiter_replay}
+        className="animate-slide-up"
+        style={stagger(5)}
+      />
+
+
 
       {/* ---- Question by question ------------------------------------------- */}
       <section className="mb-8 animate-slide-up" style={stagger(6)}>

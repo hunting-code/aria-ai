@@ -517,6 +517,213 @@ class ScoreService:
             "source": "model",
         }
 
+    # ------------------------------------------------------------------ #
+    # 5. Failure DNA and the recruiter's read
+    # ------------------------------------------------------------------ #
+    FAILURE_MODES: Final[tuple[str, ...]] = (
+        "KNOWLEDGE_GAP",
+        "COMMUNICATION_GAP",
+        "STRESS_RESPONSE",
+        "STRUCTURE_FAILURE",
+        "CONFIDENCE_DEFICIT",
+        "EXAMPLE_POVERTY",
+        "DEPTH_AVOIDANCE",
+    )
+
+    @staticmethod
+    def _answer_digest(answers: list, limit: int = 1400) -> str:
+        """Question, answer and score per turn, for the analysis prompts."""
+        rows = []
+        for a in answers:
+            rows.append(
+                f"Q: {getattr(a, 'question_text', '')}\n"
+                f"A: {(getattr(a, 'transcript', '') or '(no answer)')[:limit]}\n"
+                f"scored {getattr(a, 'answer_score', None)} on content, "
+                f"{getattr(a, 'communication_score', None)} on communication, "
+                f"{getattr(a, 'filler_count', 0)} filler words"
+            )
+        return "\n\n".join(rows)
+
+    async def generate_failure_dna(
+        self, answers: list, session: Any, llm_service: LLMService
+    ) -> dict[str, Any]:
+        """Name the root cause behind a candidate's weakest answers.
+
+        The point is to separate "does not know it" from "knows it but cannot
+        say it" - those need completely different practice, and a scorecard
+        alone cannot tell them apart.
+        """
+        answers = list(answers or [])
+        scored = [a for a in answers if getattr(a, "answer_score", None) is not None]
+        if not llm_service.is_configured or not scored:
+            return self._no_failure_dna()
+
+        system = (
+            "You are an expert interview coach and behavioral psychologist. "
+            "Analyze this interview transcript and identify the ROOT CAUSE of "
+            "the candidate's underperformance. Do not just describe what "
+            "happened - identify WHY it happened.\n\n"
+            "Choose the PRIMARY failure mode from these categories:\n"
+            "- KNOWLEDGE_GAP: They genuinely don't know the material\n"
+            "- COMMUNICATION_GAP: They know it but cannot explain it clearly\n"
+            "- STRESS_RESPONSE: They know it but panic under pressure\n"
+            "- STRUCTURE_FAILURE: Good ideas but no logical framework\n"
+            "- CONFIDENCE_DEFICIT: Correct answers delivered with too much uncertainty\n"
+            "- EXAMPLE_POVERTY: Strong concepts but no real examples to back them up\n"
+            "- DEPTH_AVOIDANCE: Keeps answers surface level to avoid being wrong\n\n"
+            "Evidence must quote or closely paraphrase what they actually said. "
+            "Write to the candidate, not about them.\n\n"
+            'Return JSON: {"primary_failure_mode": string, "confidence": 0.0-1.0, '
+            '"evidence": [3 specific quotes or behaviours from the transcript], '
+            '"headline": "one sentence that cuts to the truth", '
+            '"what_this_means": "2-3 sentences in plain English", '
+            '"good_news": "one sentence on what this means positively", '
+            '"fix": "the single most important thing to work on next"}'
+        )
+        user = (
+            f"Role: {getattr(session, 'job_role', '')}, "
+            f"difficulty {getattr(session, 'difficulty', '')}\n"
+            f"Overall score: {getattr(session, 'overall_score', None)}\n\n"
+            f"{self._answer_digest(scored)}"
+        )
+
+        try:
+            response = await llm_service.client.chat.completions.create(
+                model=llm_service.model,
+                messages=[
+                    {"role": "system", "content": system},
+                    {"role": "user", "content": user},
+                ],
+                response_format={"type": "json_object"},
+                temperature=0.4,
+                max_tokens=2000,
+                **llm_service._reasoning_kwargs(),
+            )
+            data = json.loads(response.choices[0].message.content or "{}")
+        except PROVIDER_ERRORS:
+            logger.exception("Failure DNA generation failed")
+            return self._no_failure_dna()
+        except (json.JSONDecodeError, IndexError, AttributeError):
+            logger.exception("Failure DNA came back unparseable")
+            return self._no_failure_dna()
+
+        mode = str(data.get("primary_failure_mode") or "").strip().upper()
+        if mode not in self.FAILURE_MODES:
+            mode = None
+        try:
+            confidence = max(0.0, min(1.0, float(data.get("confidence", 0))))
+        except (TypeError, ValueError):
+            confidence = 0.0
+
+        return {
+            "primary_failure_mode": mode,
+            "confidence": round(confidence, 2),
+            "evidence": [str(e) for e in (data.get("evidence") or [])][:3],
+            "headline": str(data.get("headline") or "").strip(),
+            "what_this_means": str(data.get("what_this_means") or "").strip(),
+            "good_news": str(data.get("good_news") or "").strip(),
+            "fix": str(data.get("fix") or "").strip(),
+            "source": "model",
+        }
+
+    @staticmethod
+    def _no_failure_dna() -> dict[str, Any]:
+        """Claim nothing when there is nothing to go on."""
+        return {
+            "primary_failure_mode": None,
+            "confidence": 0.0,
+            "evidence": [],
+            "headline": "",
+            "what_this_means": "",
+            "good_news": "",
+            "fix": "",
+            "source": "unavailable",
+        }
+
+    async def generate_recruiter_replay(
+        self, answers: list, session: Any, failure_dna: dict, llm_service: LLMService
+    ) -> dict[str, Any]:
+        """A recruiter's unfiltered read, as practice for the real thing."""
+        answers = list(answers or [])
+        scored = [a for a in answers if getattr(a, "answer_score", None) is not None]
+        if not llm_service.is_configured or not scored:
+            return self._no_recruiter_replay()
+
+        system = (
+            "You are a senior technical recruiter at a top tech company. You "
+            "have just reviewed this interview. Give your honest, unfiltered "
+            "assessment as if talking to a colleague.\n\n"
+            "This is a practice interview and the candidate will read this, so "
+            "be direct about the work without being contemptuous of the person. "
+            "Judge the answers given, never anything you have inferred about who "
+            "they are.\n\n"
+            'Return JSON: {"first_impression": "one sentence gut reaction", '
+            '"strengths_noticed": [2-3 specific positives], '
+            '"concerns": [2-3 specific worries], "would_shortlist": true/false, '
+            '"shortlist_reasoning": "one honest sentence", '
+            '"what_would_change_my_mind": "one specific thing that would flip it", '
+            '"compared_to_typical_candidates": "above average|average|below average", '
+            '"advice_to_candidate": "one direct sentence spoken to them"}'
+        )
+        user = (
+            f"Role: {getattr(session, 'job_role', '')}\n"
+            f"Overall score: {getattr(session, 'overall_score', None)}\n"
+            f"Root cause identified: {failure_dna.get('primary_failure_mode')}\n\n"
+            f"{self._answer_digest(scored)}"
+        )
+
+        try:
+            response = await llm_service.client.chat.completions.create(
+                model=llm_service.model,
+                messages=[
+                    {"role": "system", "content": system},
+                    {"role": "user", "content": user},
+                ],
+                response_format={"type": "json_object"},
+                temperature=0.5,
+                max_tokens=2000,
+                **llm_service._reasoning_kwargs(),
+            )
+            data = json.loads(response.choices[0].message.content or "{}")
+        except PROVIDER_ERRORS:
+            logger.exception("Recruiter replay generation failed")
+            return self._no_recruiter_replay()
+        except (json.JSONDecodeError, IndexError, AttributeError):
+            logger.exception("Recruiter replay came back unparseable")
+            return self._no_recruiter_replay()
+
+        standing = str(data.get("compared_to_typical_candidates") or "").strip().lower()
+        if standing not in ("above average", "average", "below average"):
+            standing = None
+
+        return {
+            "first_impression": str(data.get("first_impression") or "").strip(),
+            "strengths_noticed": [str(x) for x in (data.get("strengths_noticed") or [])][:3],
+            "concerns": [str(x) for x in (data.get("concerns") or [])][:3],
+            "would_shortlist": bool(data.get("would_shortlist")),
+            "shortlist_reasoning": str(data.get("shortlist_reasoning") or "").strip(),
+            "what_would_change_my_mind": str(
+                data.get("what_would_change_my_mind") or ""
+            ).strip(),
+            "compared_to_typical_candidates": standing,
+            "advice_to_candidate": str(data.get("advice_to_candidate") or "").strip(),
+            "source": "model",
+        }
+
+    @staticmethod
+    def _no_recruiter_replay() -> dict[str, Any]:
+        return {
+            "first_impression": "",
+            "strengths_noticed": [],
+            "concerns": [],
+            "would_shortlist": None,
+            "shortlist_reasoning": "",
+            "what_would_change_my_mind": "",
+            "compared_to_typical_candidates": None,
+            "advice_to_candidate": "",
+            "source": "unavailable",
+        }
+
     @staticmethod
     def _derived_verdict(scores: dict) -> str:
         """A plain verdict from the numbers, when the model did not write one."""

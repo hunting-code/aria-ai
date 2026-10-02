@@ -428,7 +428,7 @@ async def complete_session(
             db.rollback()
             logger.exception("Could not store proctoring data")
 
-    already_done = session.final_feedback and (
+    already_done = session.final_feedback and session.failure_dna and (
         session.session_type != "ai_meet"
         or (session.verbal_debrief and session.career_guidance)
     )
@@ -503,6 +503,18 @@ async def complete_session(
     session.avg_wpm = scores["avg_wpm"]
     session.duration_minutes = scores["duration_minutes"]
     session.final_feedback = feedback
+
+    # Root cause and the recruiter's read. Both degrade to an "unavailable"
+    # shape rather than raising, so a model hiccup cannot block completion.
+    if not session.failure_dna or regenerate:
+        session.failure_dna = await score_service.generate_failure_dna(
+            list(answers), session, llm_service
+        )
+    if not session.recruiter_replay or regenerate:
+        session.recruiter_replay = await score_service.generate_recruiter_replay(
+            list(answers), session, session.failure_dna or {}, llm_service
+        )
+
     session.status = SessionStatus.COMPLETED.value
     if session.completed_at is None:
         session.completed_at = datetime.now(timezone.utc)
