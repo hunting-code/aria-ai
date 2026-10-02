@@ -10,7 +10,7 @@ import {
 import useAuth from '../hooks/useAuth'
 import useCamera from '../hooks/useCamera'
 import useTTS, { VOICE_OPTIONS } from '../hooks/useTTS'
-import { resumeApi } from '../services/api'
+import { resumeApi, ttsApi } from '../services/api'
 import { Button, Card, cn } from '../components/ui'
 
 const MEET_VOICE_KEY = 'aria_meet_voice'
@@ -137,7 +137,21 @@ export default function MeetLobby() {
     }
   })
   const [previewing, setPreviewing] = useState(null)
+  // Whether the premium voice is available on this deployment. undefined while
+  // unknown, so the UI does not claim either way before it knows.
+  const [premiumVoice, setPremiumVoice] = useState(undefined)
   const tts = useTTS({ voiceId })
+
+  useEffect(() => {
+    let live = true
+    ttsApi
+      .voices()
+      .then((d) => live && setPremiumVoice(Boolean(d?.available)))
+      .catch(() => live && setPremiumVoice(false))
+    return () => {
+      live = false
+    }
+  }, [])
 
   useEffect(() => {
     mic.start()
@@ -342,10 +356,22 @@ export default function MeetLobby() {
                   </button>
                 ))}
               </div>
-              {!tts.isSupported ? (
-                <p className="mt-3 text-xs text-aria-amber">
-                  This browser has no speech synthesis - ARIA&apos;s questions will
-                  appear as text only.
+              {premiumVoice === false ? (
+                <p className="mt-3 text-xs text-aria-muted">
+                  Using your browser&apos;s built-in voice. It sounds robotic but
+                  costs nothing and never runs out - the interview itself is
+                  identical either way.
+                </p>
+              ) : premiumVoice ? (
+                <p className="mt-3 flex items-center gap-1.5 text-xs text-aria-green">
+                  <Check className="h-3 w-3" aria-hidden="true" />
+                  Natural voice enabled
+                </p>
+              ) : null}
+              {!tts.isSupported && premiumVoice === false ? (
+                <p className="mt-2 text-xs text-aria-amber">
+                  This browser has no speech synthesis either - ARIA&apos;s
+                  questions will appear as text only.
                 </p>
               ) : null}
             </Card>

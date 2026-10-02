@@ -57,6 +57,11 @@ class Settings(BaseSettings):
     OPENAI_API_KEY: str = ""
     OPENAI_MODEL: str = "gpt-4o-mini"
 
+    # ---- Speech synthesis (optional) ----
+    # ElevenLabs gives ARIA a human-sounding voice. Entirely optional: without
+    # it the browser's own speech synthesis is used instead.
+    ELEVENLABS_API_KEY: str = ""
+
     # Groq chat model. Must support streaming and JSON mode - the reasoning
     # models (gpt-oss-20b) spend their budget before emitting content.
     GROQ_LLM_MODEL: str = "openai/gpt-oss-120b"

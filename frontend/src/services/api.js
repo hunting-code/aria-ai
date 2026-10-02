@@ -297,6 +297,26 @@ export const accountApi = {
       .then(() => undefined),
 }
 
+export const ttsApi = {
+  /** GET /api/tts/voices - which voices exist, and whether premium is on. */
+  voices: () => api.get(`${API_PREFIX}/tts/voices`).then((r) => r.data),
+
+  /**
+   * POST /api/tts/speak - MP3 for one turn.
+   * Resolves to null on ANY failure (no key, quota gone, network): the caller
+   * falls back to the browser voice rather than leaving the room silent.
+   */
+  speak: ({ text, voice, signal }) =>
+    api
+      .post(
+        `${API_PREFIX}/tts/speak`,
+        { text, voice },
+        { responseType: 'blob', signal, timeout: 30000 },
+      )
+      .then((r) => r.data)
+      .catch(() => null),
+}
+
 export const careerApi = {
   /** GET /api/career/:id - the seven-section report. Cached; built on first open. */
   report: (sessionId, { force = false } = {}) =>

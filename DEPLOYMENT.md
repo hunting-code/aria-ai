@@ -58,6 +58,14 @@ Two things to check before moving on:
    | `ACCESS_TOKEN_EXPIRE_MINUTES` | `1440` |
    | `ENVIRONMENT` | `production` |
    | `CORS_ORIGINS` | your Vercel URL — fill in after step 3 |
+   | `ELEVENLABS_API_KEY` | optional — see the note below |
+
+   **On ElevenLabs:** the free tier is 10,000 characters a month, and one
+   complete AI Meet speaks about 4,100 — roughly **two interviews**. Leave the
+   key unset and ARIA uses the browser's own voice, which is robotic but free
+   and unlimited. If you do set it, the app falls back to the browser voice
+   automatically the moment the quota runs out, so a demo cannot be derailed
+   mid-answer.
 
    Generate the secret key yourself:
 

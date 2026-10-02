@@ -21,7 +21,7 @@ from sqlalchemy.orm import Session
 
 from app.api import ai_meet_websocket as meet_ws
 from app.api import websocket as ws
-from app.api.routes import auth, career, interview, report, resume, session
+from app.api.routes import auth, career, interview, report, resume, session, tts
 from app.core.config import get_settings
 from app.core.database import check_connection, get_db, init_db
 from app.core.limiter import limiter
@@ -180,6 +180,7 @@ app.include_router(interview.router, prefix=settings.API_PREFIX)
 app.include_router(session.router, prefix=settings.API_PREFIX)
 app.include_router(resume.router, prefix=settings.API_PREFIX)
 app.include_router(career.router, prefix=settings.API_PREFIX)
+app.include_router(tts.router, prefix=settings.API_PREFIX)
 app.include_router(report.router, prefix=settings.API_PREFIX)
 
 

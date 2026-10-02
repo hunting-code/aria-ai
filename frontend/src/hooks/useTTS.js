@@ -8,11 +8,15 @@
 
 import { useCallback, useEffect, useRef, useState } from 'react'
 
+import { ttsApi } from '../services/api'
+
+// The four voices offered in the lobby. `match` is only used by the browser
+// fallback, to pick the nearest local voice when premium speech is unavailable.
 export const VOICE_OPTIONS = [
-  { id: 'nova', name: 'Nova', blurb: 'Warm and conversational', match: ['samantha', 'jenny', 'aria', 'zira', 'female'] },
-  { id: 'echo', name: 'Echo', blurb: 'Even and neutral', match: ['alex', 'daniel', 'guy', 'male'] },
-  { id: 'onyx', name: 'Onyx', blurb: 'Low and measured', match: ['fred', 'david', 'rishi', 'male'] },
-  { id: 'alloy', name: 'Alloy', blurb: 'Bright and quick', match: ['karen', 'moira', 'tessa', 'female'] },
+  { id: 'sarah', name: 'Sarah', blurb: 'Professional female', match: ['samantha', 'jenny', 'aria', 'zira', 'female'] },
+  { id: 'rachel', name: 'Rachel', blurb: 'Calm female', match: ['karen', 'moira', 'tessa', 'female'] },
+  { id: 'adam', name: 'Adam', blurb: 'Professional male', match: ['alex', 'daniel', 'guy', 'male'] },
+  { id: 'josh', name: 'Josh', blurb: 'Friendly male', match: ['fred', 'david', 'rishi', 'male'] },
 ]
 
 const PREVIEW_LINE =
@@ -42,6 +46,10 @@ export default function useTTS({ voiceId = 'nova' } = {}) {
   const [spokenText, setSpokenText] = useState('')
 
   const utteranceRef = useRef(null)
+  // The <audio> element playing premium speech, when that path is in use.
+  const audioRef = useRef(null)
+  // Whether the last turn used premium audio, for the lobby's indicator.
+  const premiumRef = useRef(false)
   const doneRef = useRef(null)
   const voiceIdRef = useRef(voiceId)
   voiceIdRef.current = voiceId
@@ -56,6 +64,17 @@ export default function useTTS({ voiceId = 'nova' } = {}) {
   }, [])
 
   const cancel = useCallback(() => {
+    const audio = audioRef.current
+    if (audio) {
+      try {
+        audio.pause()
+        audio.src = ''
+      } catch {
+        /* already torn down */
+      }
+      audioRef.current = null
+      setIsSpeaking(false)
+    }
     if (!supported()) return
     try {
       window.speechSynthesis.cancel()
@@ -73,7 +92,8 @@ export default function useTTS({ voiceId = 'nova' } = {}) {
    * Speak `text`, revealing it word by word in `spokenText`.
    * Resolves when the utterance finishes (or immediately if unsupported).
    */
-  const speak = useCallback(
+  /** Browser speech synthesis. The fallback, and the only path pre-ElevenLabs. */
+  const speakLocally = useCallback(
     (text, { onWord } = {}) =>
       new Promise((resolve) => {
         const clean = String(text ?? '').trim()
@@ -119,7 +139,82 @@ export default function useTTS({ voiceId = 'nova' } = {}) {
     [cancel, voices],
   )
 
-  /** Three-second sample of a voice, for the lobby's selector. */
+  /**
+   * Speak `text` as ARIA.
+   *
+   * Premium audio first, because a robotic interviewer undercuts the whole
+   * exercise. If that fails for any reason - no key, quota exhausted, offline -
+   * the browser voice takes over silently. The candidate should never learn
+   * about a billing limit halfway through an answer.
+   */
+  const speak = useCallback(
+    async (text, { onWord } = {}) => {
+      const clean = String(text ?? '').trim()
+      if (!clean) return
+      cancel()
+      setSpokenText('')
+
+      const blob = await ttsApi.speak({ text: clean, voice: voiceIdRef.current })
+      if (!blob || blob.size === 0) {
+        premiumRef.current = false
+        return speakLocally(clean, { onWord })
+      }
+
+      premiumRef.current = true
+      const url = URL.createObjectURL(blob)
+      const audio = new Audio(url)
+      audioRef.current = audio
+
+      return new Promise((resolve) => {
+        const words = clean.split(/\s+/)
+        let revealTimer = null
+
+        const finish = () => {
+          window.clearInterval(revealTimer)
+          URL.revokeObjectURL(url)
+          audioRef.current = null
+          setSpokenText(clean)
+          setIsSpeaking(false)
+          resolve()
+        }
+
+        // ElevenLabs returns audio, not word-boundary events, so the subtitle
+        // is paced against playback position instead. Not per-word accurate,
+        // but it tracks the voice closely enough to read along with.
+        audio.onloadedmetadata = () => {
+          revealTimer = window.setInterval(() => {
+            if (!audio.duration || !Number.isFinite(audio.duration)) return
+            const progress = Math.min(1, audio.currentTime / audio.duration)
+            const upto = words.slice(0, Math.ceil(progress * words.length)).join(' ')
+            setSpokenText(upto)
+            onWord?.(upto)
+          }, 120)
+        }
+        audio.onended = finish
+        audio.onerror = () => {
+          // Audio decoded badly: still better to speak than to go silent.
+          window.clearInterval(revealTimer)
+          URL.revokeObjectURL(url)
+          audioRef.current = null
+          premiumRef.current = false
+          speakLocally(clean, { onWord }).then(resolve)
+        }
+
+        setIsSpeaking(true)
+        audio.play().catch(() => {
+          // Autoplay blocked before any user gesture.
+          window.clearInterval(revealTimer)
+          URL.revokeObjectURL(url)
+          audioRef.current = null
+          premiumRef.current = false
+          speakLocally(clean, { onWord }).then(resolve)
+        })
+      })
+    },
+    [cancel, speakLocally],
+  )
+
+  /** Five-second sample of a voice, for the lobby's selector. */
   const preview = useCallback(
     (previewVoiceId) => {
       const previous = voiceIdRef.current
@@ -128,7 +223,7 @@ export default function useTTS({ voiceId = 'nova' } = {}) {
       window.setTimeout(() => {
         cancel()
         voiceIdRef.current = previous
-      }, 3000)
+      }, 5000)
       return done
     },
     [speak, cancel],
@@ -144,5 +239,6 @@ export default function useTTS({ voiceId = 'nova' } = {}) {
     spokenText,
     isSupported: supported(),
     voices,
+    usingPremiumVoice: premiumRef.current,
   }
 }
