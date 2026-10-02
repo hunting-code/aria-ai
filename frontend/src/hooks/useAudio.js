@@ -16,6 +16,25 @@ import useToast from '../store/toastStore'
 const CHUNK_MS = 3000
 
 // Preference order: Opus in WebM is the best supported; Safari needs mp4.
+// ---- Live transcription via the browser ---------------------------------- //
+// The Web Speech API gives words as they are spoken, with no upload and no
+// round trip, which is what makes a live transcript feel live. Groq Whisper
+// stays as the fallback for browsers without it (Firefox) or when it errors.
+//
+// Caveats worth knowing: in Chrome this streams audio to Google's servers, it
+// is unavailable in Firefox, and some privacy-hardened browsers block it. All
+// three degrade to the Whisper upload path rather than failing.
+const SpeechRecognition =
+  typeof window !== 'undefined'
+    ? window.SpeechRecognition || window.webkitSpeechRecognition
+    : undefined
+
+export const liveSpeechSupported = Boolean(SpeechRecognition)
+
+// en-IN rather than en-US: this is built for Indian English speakers, and the
+// recogniser's language model materially changes accuracy.
+const SPEECH_LANG = 'en-IN'
+
 const MIME_CANDIDATES = [
   'audio/webm;codecs=opus',
   'audio/webm',
@@ -53,6 +72,11 @@ export default function useAudio({ onPartial, onFinal } = {}) {
   const [transcript, setTranscript] = useState('')
   const [durationSeconds, setDurationSeconds] = useState(0)
   const [error, setError] = useState(null)
+  // Web Speech recogniser, when the browser has one. `speechTextRef` holds the
+  // finalised phrases so an interim result never overwrites settled text.
+  const recognitionRef = useRef(null)
+  const speechTextRef = useRef('')
+  const usingSpeechRef = useRef(false)
 
   const recorderRef = useRef(null)
   const streamRef = useRef(null)
@@ -200,6 +224,51 @@ export default function useAudio({ onPartial, onFinal } = {}) {
       return false
     }
 
+    // Start live recognition in parallel with recording. The recorder still
+    // runs: it is the fallback if recognition yields nothing, and it is what
+    // the Whisper path needs.
+    speechTextRef.current = ''
+    usingSpeechRef.current = false
+    if (SpeechRecognition) {
+      try {
+        const recognition = new SpeechRecognition()
+        recognition.continuous = true
+        recognition.interimResults = true
+        recognition.lang = SPEECH_LANG
+        recognition.onresult = (event) => {
+          let interim = ''
+          for (let i = event.resultIndex; i < event.results.length; i += 1) {
+            const chunk = event.results[i][0]?.transcript ?? ''
+            if (event.results[i].isFinal) {
+              speechTextRef.current = `${speechTextRef.current} ${chunk}`.trim()
+            } else {
+              interim += chunk
+            }
+          }
+          usingSpeechRef.current = true
+          setLiveTranscript(`${speechTextRef.current} ${interim}`.trim())
+        }
+        // A recognition failure is not fatal: the Whisper upload still runs on
+        // stop, so the answer is never lost because this path misbehaved.
+        recognition.onerror = () => {}
+        recognition.onend = () => {
+          // Chrome ends the session on its own after a pause; restart while the
+          // candidate is still recording so a long answer is not truncated.
+          if (recorderRef.current?.state === 'recording') {
+            try {
+              recognition.start()
+            } catch {
+              /* already starting */
+            }
+          }
+        }
+        recognition.start()
+        recognitionRef.current = recognition
+      } catch {
+        recognitionRef.current = null
+      }
+    }
+
     const mimeType = pickMimeType()
     mimeRef.current = mimeType || 'audio/webm'
 
@@ -291,17 +360,37 @@ export default function useAudio({ onPartial, onFinal } = {}) {
       return null
     }
 
-    // Wait for the recorder to flush its final buffer before uploading.
+    // Wait for the recorder to flush its final buffer before uploading - but
+    // never unconditionally. If the microphone is revoked mid-answer, or the OS
+    // takes the device, or the tab is throttled, `onstop` never fires and an
+    // unbounded await leaves the interview stuck on "ARIA is reviewing..."
+    // forever. Two seconds is far longer than a real flush takes.
     const stopped = new Promise((resolve) => {
       recorder.onstop = () => resolve()
     })
     recorder.stop()
-    await stopped
+    await Promise.race([
+      stopped,
+      new Promise((resolve) => window.setTimeout(resolve, 2000)),
+    ])
 
     const elapsed = (Date.now() - startedAtRef.current) / 1000
     setDurationSeconds(Number(elapsed.toFixed(1)))
     setIsRecording(false)
     teardown()
+
+    // Stop live recognition and keep whatever it heard.
+    const recognition = recognitionRef.current
+    recognitionRef.current = null
+    if (recognition) {
+      try {
+        recognition.onend = null
+        recognition.stop()
+      } catch {
+        /* already stopped */
+      }
+    }
+    const spokenLive = speechTextRef.current.trim()
 
     const mimeType = mimeRef.current || 'audio/webm'
     const blob = new Blob(chunksRef.current, { type: mimeType })
@@ -312,6 +401,23 @@ export default function useAudio({ onPartial, onFinal } = {}) {
     abortRef.current?.abort()
     inFlightRef.current = false
 
+    // Live recognition wins when it produced something: it already has the
+    // words, so there is no reason to make the candidate wait on an upload.
+    // Whisper is still called when it produced nothing, which covers browsers
+    // without the API and sessions where recognition silently failed.
+    if (spokenLive) {
+      setTranscript(spokenLive)
+      setLiveTranscript(spokenLive)
+      setIsTranscribing(false)
+      return {
+        blob,
+        durationSeconds: Number(elapsed.toFixed(2)),
+        transcript: spokenLive,
+        transcriptionFailed: false,
+        source: 'speech',
+      }
+    }
+
     const data = await transcribeSoFar({ final: true })
     // The blob is returned either way: if transcription failed, the caller still
     // has the recording and can decide what to do with it.
@@ -319,12 +425,20 @@ export default function useAudio({ onPartial, onFinal } = {}) {
       blob,
       durationSeconds: Number(elapsed.toFixed(2)),
       transcriptionFailed: data === null,
+      source: 'whisper',
       ...(data ?? {}),
     }
   }, [teardown, transcribeSoFar])
 
   const reset = useCallback(() => {
     abortRef.current?.abort()
+    try {
+      recognitionRef.current?.stop()
+    } catch {
+      /* already stopped */
+    }
+    recognitionRef.current = null
+    speechTextRef.current = ''
     teardown()
     chunksRef.current = []
     inFlightRef.current = false
@@ -356,6 +470,7 @@ export default function useAudio({ onPartial, onFinal } = {}) {
     durationSeconds,
     error,
     isSupported,
+    liveSpeechSupported,
     reset,
     getLevel,
   }

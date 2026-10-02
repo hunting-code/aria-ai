@@ -177,6 +177,7 @@ async def _speak(
     instruction: str,
     *,
     is_question: bool,
+    counts_as_question: bool | None = None,
 ) -> str | None:
     """Stream one ARIA turn to the client.
 
@@ -230,8 +231,13 @@ async def _speak(
         return None
 
     state.conversation_history.append({"role": "assistant", "content": text})
+    # `is_question` tells the CLIENT to reopen the microphone.
+    # `counts_as_question` decides whether the phase quota is consumed. They
+    # differ for a follow-up: it must be answered, but it re-asks the same slot.
+    consumes = is_question if counts_as_question is None else counts_as_question
     if is_question:
         state.current_question = text
+    if consumes:
         state.phase_question_count += 1
         state.total_question_count += 1
 
@@ -467,7 +473,13 @@ async def ai_meet_websocket(
                         "clarifying follow-up that references what they just said "
                         "and asks for the missing specifics. This does not count "
                         "as a new interview question.",
-                        is_question=False,
+                        # A follow-up IS a question - the candidate has to
+                        # answer it, so the client must reopen the microphone.
+                        # Sending False left the interview with no mic and no way
+                        # to submit, a dead end. It still re-asks the same slot,
+                        # so it does not consume one from the phase quota.
+                        is_question=True,
+                        counts_as_question=False,
                     )
                     if text is None:
                         raise WebSocketDisconnect(code=WS_NORMAL_CLOSURE)

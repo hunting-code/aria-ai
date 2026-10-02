@@ -222,8 +222,30 @@ export default function useAIMeet(sessionId, { voiceId = 'nova', enabled = true 
     if (!isListening) return
     setIsListening(false)
     setIsProcessing(true)
-    const result = await stopRecording()
+    // stopRecording can stall on a revoked microphone or a slow upload. Cap it,
+    // so a stuck transcription cannot leave the interview on "ARIA is
+    // reviewing..." with no way out.
+    const result = await Promise.race([
+      stopRecording(),
+      new Promise((resolve) => window.setTimeout(() => resolve(null), 15000)),
+    ])
     const text = (result?.transcript ?? audio.transcript ?? '').trim()
+
+    // Nothing was heard: tell the candidate and hand the mic back rather than
+    // submitting silence and letting them wonder what happened.
+    if (!text) {
+      setError(
+        'Could not transcribe that - please try again. Check your microphone is not muted.',
+      )
+      setIsProcessing(false)
+      setIsListening(true)
+      answerStartedAt.current = Date.now()
+      startRecording().catch(() => {
+        setIsListening(false)
+        setError('The microphone could not be restarted. Reload to continue.')
+      })
+      return
+    }
     const seconds =
       result?.durationSeconds ??
       (answerStartedAt.current ? (Date.now() - answerStartedAt.current) / 1000 : 0)
@@ -248,7 +270,7 @@ export default function useAIMeet(sessionId, { voiceId = 'nova', enabled = true 
       return
     }
     resetAudio()
-  }, [isListening, stopRecording, audio.transcript, send, resetAudio])
+  }, [isListening, stopRecording, startRecording, audio.transcript, send, resetAudio])
 
   /** Ask ARIA a question during the wrap-up. */
   const askAria = useCallback(
@@ -266,6 +288,17 @@ export default function useAIMeet(sessionId, { voiceId = 'nova', enabled = true 
     setIsProcessing(true)
     send({ type: 'end_meet' })
   }, [send, cancelSpeech])
+
+  // A submitted answer that gets no reply within 30s is a dead end: surface it
+  // and let the candidate retry, rather than spinning indefinitely.
+  useEffect(() => {
+    if (!isProcessing) return undefined
+    const timer = window.setTimeout(() => {
+      setIsProcessing(false)
+      setError('ARIA did not respond in time. Your answer was saved - try again.')
+    }, 30000)
+    return () => window.clearTimeout(timer)
+  }, [isProcessing])
 
   // ---- Progress ---------------------------------------------------------- //
   const phaseIndex = Math.max(0, MEET_PHASES.findIndex((p) => p.id === phase))
