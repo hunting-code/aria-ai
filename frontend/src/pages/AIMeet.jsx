@@ -166,14 +166,24 @@ export default function AIMeet() {
     <div className="flex h-screen flex-col overflow-hidden bg-aria-void">
       {/* ---- TOP BAR ---- */}
       <header className="flex h-14 shrink-0 items-center justify-between gap-4 border-b border-aria-border bg-aria-base px-4 sm:px-6">
-        <div className="flex items-center gap-2">
-          <span
-            aria-hidden="true"
-            className="h-2.5 w-2.5 animate-pulse rounded-full bg-aria-red"
-          />
-          <span className="font-mono text-xs uppercase tracking-wider text-aria-red">
-            Recording
+        <div className="flex items-center gap-3">
+          <span className="flex items-center gap-2">
+            <span
+              aria-hidden="true"
+              className="h-2.5 w-2.5 animate-pulse rounded-full bg-aria-red"
+            />
+            <span className="font-mono text-xs uppercase tracking-wider text-aria-red">
+              Recording
+            </span>
           </span>
+          {meet.questionNumber > 0 ? (
+            <span className="hidden font-mono text-xs text-aria-muted sm:inline">
+              Question {meet.questionNumber} of {meet.totalQuestions}
+              {meet.isFollowUp ? (
+                <span className="ml-1.5 text-aria-amber">· follow-up</span>
+              ) : null}
+            </span>
+          ) : null}
         </div>
 
         {/* Phase rail */}
@@ -363,6 +373,13 @@ export default function AIMeet() {
             <span className="ml-2 rounded-md border border-aria-border px-2 py-1 text-[11px] text-aria-muted">
               mic off
             </span>
+            <button
+              type="button"
+              onClick={meet.skipQuestion}
+              className="ml-3 rounded px-1 text-xs text-aria-muted underline-offset-4 transition-colors hover:text-aria-text hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-aria-pulse"
+            >
+              Skip and continue →
+            </button>
           </div>
         ) : meet.isListening ? (
           <div className="flex w-full max-w-2xl items-center justify-between gap-4">
@@ -385,7 +402,16 @@ export default function AIMeet() {
             >
               <Mic className="h-7 w-7" aria-hidden="true" />
             </button>
-            <Button onClick={meet.sendAnswer}>Done Answering</Button>
+            <div className="flex flex-col items-end gap-1.5">
+              <Button onClick={meet.sendAnswer}>Done Answering</Button>
+              <button
+                type="button"
+                onClick={meet.skipQuestion}
+                className="rounded px-1 text-xs text-aria-muted underline-offset-4 transition-colors hover:text-aria-text hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-aria-pulse"
+              >
+                Skip and continue →
+              </button>
+            </div>
           </div>
         ) : (
           <div className="flex items-center gap-3" aria-live="polite">
@@ -397,6 +423,15 @@ export default function AIMeet() {
                   ? 'ARIA is reviewing…'
                   : 'Connecting to your interview…'}
             </span>
+            {meet.hasSpoken ? (
+              <button
+                type="button"
+                onClick={meet.skipQuestion}
+                className="ml-3 rounded px-1 text-xs text-aria-muted underline-offset-4 transition-colors hover:text-aria-text hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-aria-pulse"
+              >
+                Skip and continue →
+              </button>
+            ) : null}
           </div>
         )}
       </footer>

@@ -10,7 +10,7 @@ Wire format, both directions: {"type": ..., ...}.
   server -> client   aria_speaking | aria_token | aria_complete | phase_change |
                      follow_up | meet_complete | error | pong
   client -> server   ready | answer_transcript | candidate_question |
-                     end_meet | ping
+                     skip_question | end_meet | ping
 
 Mounted in `app.main` at /ws/meet/{session_id}?token=...
 """
@@ -380,6 +380,85 @@ async def ai_meet_websocket(
                     "in 2-3 sentences. Do not ask a new interview question yet.",
                     is_question=False,
                 )
+                continue
+
+            # ---- skip_question -------------------------------------------- #
+            # An escape hatch. If recognition fails, or the candidate simply
+            # cannot answer, the interview must still be able to move on - being
+            # trapped on one question is worse than a gap in the scoring. The
+            # skipped question is recorded unanswered rather than scored as a
+            # bad answer, so it does not distort the result.
+            if msg_type == "skip_question":
+                try:
+                    await run_in_threadpool(
+                        _persist_answer,
+                        db,
+                        session_id=session_uuid,
+                        question_number=state.total_question_count,
+                        question_text=state.current_question,
+                        question_tag=AI_MEET_PHASES[state.current_phase]["name"],
+                        is_follow_up=state.is_in_follow_up,
+                        transcript=None,
+                        answer_score=None,
+                        communication_score=None,
+                        confidence_score=None,
+                        filler_count=0,
+                        filler_words_detected=[],
+                        wpm=None,
+                        duration_seconds=None,
+                        ai_feedback="Skipped.",
+                    )
+                except SQLAlchemyError:
+                    logger.exception("Could not record a skip (%s)", session_id)
+
+                state.is_in_follow_up = False
+
+                if state.phase_is_complete:
+                    if state.is_final_phase:
+                        await _complete_meet(websocket, state, session, session_uuid, db)
+                        return
+                    from_phase = state.current_phase
+                    to_phase = state.advance_phase()
+                    transition = get_phase_transition(from_phase, to_phase)
+                    await run_in_threadpool(_set_phase, db, session_uuid, to_phase)
+                    await manager.send_json(
+                        websocket,
+                        {
+                            "type": "phase_change",
+                            "from": from_phase,
+                            "to": to_phase,
+                            "message": transition,
+                            "phase_name": AI_MEET_PHASES[to_phase]["name"],
+                            "question_count": AI_MEET_PHASES[to_phase]["question_count"],
+                        },
+                    )
+                    if to_phase == "wrap_up":
+                        wrap = generate_wrap_up_question(candidate_name)
+                        full = f"{transition} {wrap}"
+                        await manager.send_json(
+                            websocket,
+                            {"type": "aria_speaking", "text": full,
+                             "is_question": True, "phase": to_phase},
+                        )
+                        state.conversation_history.append(
+                            {"role": "assistant", "content": full}
+                        )
+                        state.current_question = wrap
+                        state.phase_question_count += 1
+                        state.total_question_count += 1
+                        await manager.send_json(
+                            websocket,
+                            {"type": "aria_complete", "is_question": True,
+                             "phase": to_phase,
+                             "question_number": state.total_question_count},
+                        )
+                        continue
+
+                if await _speak(
+                    websocket, state, system_prompt, _ask_instruction(state),
+                    is_question=True,
+                ) is None:
+                    raise WebSocketDisconnect(code=WS_NORMAL_CLOSURE)
                 continue
 
             # ---- an answer ----------------------------------------------- #

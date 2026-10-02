@@ -41,6 +41,7 @@ export default function useAIMeet(sessionId, { voiceId = 'nova', enabled = true 
   // True only once ARIA has actually taken her first turn, so the bottom bar
   // does not claim she is "reviewing" before the interview has begun.
   const [hasSpoken, setHasSpoken] = useState(false)
+  const [isFollowUp, setIsFollowUp] = useState(false)
   const [hasStarted, setHasStarted] = useState(false)
 
   const audio = useAudio()
@@ -51,6 +52,8 @@ export default function useAIMeet(sessionId, { voiceId = 'nova', enabled = true 
   // deliverTurn changes identity when the voice list loads; the socket effect
   // reads it through this ref so it never re-subscribes.
   const deliverRef = useRef(null)
+  // Mirrors questionNumber for the socket handler, which must not re-subscribe.
+  const questionNumberRef = useRef(0)
   // Streamed tokens accumulate here; the frame's own `text` wins when present.
   const bufferRef = useRef('')
   const answerStartedAt = useRef(null)
@@ -96,6 +99,7 @@ export default function useAIMeet(sessionId, { voiceId = 'nova', enabled = true 
   )
 
   deliverRef.current = deliverTurn
+  questionNumberRef.current = questionNumber
 
   // ---- Socket ------------------------------------------------------------ //
   useEffect(() => {
@@ -126,6 +130,21 @@ export default function useAIMeet(sessionId, { voiceId = 'nova', enabled = true 
       }
       if (!liveRef.current) return
 
+      // Frame trace. Dev only: in production this would log a candidate's
+      // answers to the console. Token frames are summarised, not spammed.
+      if (import.meta.env.DEV && msg.type !== 'aria_token') {
+        // eslint-disable-next-line no-console
+        console.log(
+          `%c[meet] ${msg.type}`,
+          'color:#D4891A;font-weight:600',
+          msg.type === 'aria_complete'
+            ? { is_question: msg.is_question, phase: msg.phase, q: msg.question_number }
+            : msg.type === 'phase_change'
+              ? { from: msg.from, to: msg.to }
+              : msg,
+        )
+      }
+
       switch (msg.type) {
         case 'aria_speaking':
           // A scripted turn (opening, wrap-up, debrief) carries its full text;
@@ -141,9 +160,14 @@ export default function useAIMeet(sessionId, { voiceId = 'nova', enabled = true 
         case 'aria_complete': {
           const text = bufferRef.current.trim()
           bufferRef.current = ''
+          if (msg.is_question && msg.question_number !== questionNumberRef.current) {
+            setIsFollowUp(false)
+          }
           if (msg.phase) setPhase(msg.phase)
+          // The server owns the count: a follow-up re-asks the same slot and
+          // deliberately does not advance it. Deriving the count here instead
+          // would double-count every follow-up.
           if (msg.question_number) setQuestionNumber(msg.question_number)
-          if (msg.is_question) setPhaseQuestionsAnswered((n) => n + 1)
           deliverRef.current?.(text, Boolean(msg.is_question))
           break
         }
@@ -159,9 +183,10 @@ export default function useAIMeet(sessionId, { voiceId = 'nova', enabled = true 
           break
 
         case 'follow_up':
-          // The server already sent this as an aria_complete turn; this frame
-          // only flags that the same question is being re-asked.
-          setPhaseQuestionsAnswered((n) => Math.max(0, n - 1))
+          // Already delivered as an aria_complete turn; this frame only marks
+          // that the same slot is being re-asked, which the counter reflects
+          // by not having advanced.
+          setIsFollowUp(true)
           break
 
         case 'meet_complete':
@@ -282,6 +307,21 @@ export default function useAIMeet(sessionId, { voiceId = 'nova', enabled = true 
     [send],
   )
 
+  /** Move past the current question without answering it. */
+  const skipQuestion = useCallback(() => {
+    cancelSpeech()
+    setIsListening(false)
+    setError(null)
+    setIsProcessing(true)
+    // Discard whatever was captured: it is not being submitted.
+    stopRecording().catch(() => {})
+    resetAudio()
+    if (!send({ type: 'skip_question' })) {
+      setError('Connection lost. Could not skip.')
+      setIsProcessing(false)
+    }
+  }, [send, cancelSpeech, stopRecording, resetAudio])
+
   const endMeet = useCallback(() => {
     cancelSpeech()
     setIsListening(false)
@@ -328,12 +368,14 @@ export default function useAIMeet(sessionId, { voiceId = 'nova', enabled = true 
     isListening,
     isProcessing,
     hasSpoken,
+    isFollowUp,
     isTranscribing: audio.isTranscribing,
     liveTranscript: audio.transcript,
     getLevel: audio.getLevel,
     // control
     begin,
     sendAnswer,
+    skipQuestion,
     askAria,
     endMeet,
     hasStarted,
