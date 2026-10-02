@@ -1,0 +1,40 @@
+# Render blueprint. Import this from the Render dashboard (New > Blueprint) and
+# it creates the backend service with the right build and start commands.
+#
+# The database is NOT defined here on purpose: Render's free PostgreSQL is
+# deleted after 30 days. Use Neon's free tier instead and paste its connection
+# string in as DATABASE_URL.
+services:
+  - type: web
+    name: aria-ai-backend
+    runtime: python
+    plan: free
+    rootDir: backend
+    buildCommand: pip install -r requirements.txt
+    startCommand: uvicorn app.main:app --host 0.0.0.0 --port $PORT
+    healthCheckPath: /health
+    envVars:
+      - key: PYTHON_VERSION
+        value: "3.13.4"
+      # Fixed values - safe to commit.
+      - key: LLM_PROVIDER
+        value: groq
+      - key: GROQ_LLM_MODEL
+        value: openai/gpt-oss-120b
+      - key: WHISPER_MODEL
+        value: whisper-large-v3-turbo
+      - key: ALGORITHM
+        value: HS256
+      - key: ACCESS_TOKEN_EXPIRE_MINUTES
+        value: "1440"
+      - key: ENVIRONMENT
+        value: production
+      # Secrets and URLs - set these in the Render dashboard, never in this file.
+      - key: DATABASE_URL
+        sync: false
+      - key: SECRET_KEY
+        sync: false
+      - key: GROQ_API_KEY
+        sync: false
+      - key: CORS_ORIGINS
+        sync: false

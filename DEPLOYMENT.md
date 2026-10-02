@@ -1,57 +1,87 @@
 # Deploying ARIA AI
 
-Three pieces: a PostgreSQL database and the FastAPI backend on Railway, and the
-React frontend on Vercel. Do them in that order — the frontend needs the
+Three pieces: a PostgreSQL database on Neon, the FastAPI backend on Render,
+and the React frontend on Vercel. All three are free and none asks for a card. Do them in that order — the frontend needs the
 backend's URL, and the backend needs the database's.
 
 ---
 
-## 1. Database (Railway PostgreSQL)
+## 1. Database (Neon — free, no card)
 
-1. railway.app → **New Project** → **Provision PostgreSQL**.
-2. Open the Postgres service → **Variables** → copy `DATABASE_URL`.
+Neon rather than Render's own PostgreSQL: **Render deletes free databases after
+30 days**, which would take your project down mid-semester. Neon's free tier
+does not expire.
 
-It looks like `postgresql://postgres:PASSWORD@HOST:PORT/railway`.
+1. neon.tech → sign in with GitHub → **Create project**.
+2. Name it `aria-ai`, pick the region nearest you, accept the defaults.
+3. On the dashboard, copy the **connection string** (Pooled connection).
 
-> If the value starts with `postgres://`, change it to `postgresql://`.
-> SQLAlchemy 2 does not accept the shorter scheme.
+It looks like:
+`postgresql://user:PASSWORD@ep-xxx-pooler.region.aws.neon.tech/neondb?sslmode=require`
+
+Two things to check before moving on:
+
+- It must start `postgresql://`, not `postgres://` — SQLAlchemy 2 rejects the
+  short scheme. Edit it if needed.
+- Keep `?sslmode=require` on the end. Neon refuses unencrypted connections.
 
 ---
 
-## 2. Backend (Railway)
+## 2. Backend (Render — free, no card)
 
-1. Same project → **New** → **GitHub Repo** → pick this repository.
-2. Settings → **Root Directory**: `backend`
-3. Variables → add these:
+1. render.com → sign in with GitHub → **New** → **Web Service**.
+2. Connect your `aria-ai` repository.
+3. Settings:
 
-| Variable | Value |
-|---|---|
-| `DATABASE_URL` | the one you copied in step 1 |
-| `SECRET_KEY` | a fresh 32+ char random string (see below) |
-| `GROQ_API_KEY` | your Groq key |
-| `LLM_PROVIDER` | `groq` |
-| `GROQ_LLM_MODEL` | `openai/gpt-oss-120b` |
-| `WHISPER_MODEL` | `whisper-large-v3-turbo` |
-| `ALGORITHM` | `HS256` |
-| `ACCESS_TOKEN_EXPIRE_MINUTES` | `1440` |
-| `ENVIRONMENT` | `production` |
-| `CORS_ORIGINS` | your Vercel URL — fill in after step 3 |
+   | Field | Value |
+   |---|---|
+   | Root Directory | `backend` |
+   | Runtime | Python 3 |
+   | Build Command | `pip install -r requirements.txt` |
+   | Start Command | `uvicorn app.main:app --host 0.0.0.0 --port $PORT` |
+   | Instance Type | **Free** |
 
-Generate a secret key:
+   (Or use **New → Blueprint** and let Render read `render.yaml`, which sets all
+   of this for you.)
 
-```bash
-python3 -c "import secrets; print(secrets.token_urlsafe(48))"
-```
+4. **Environment** → add:
 
-**Do not reuse the `SECRET_KEY` from `backend/.env`.** Every token ever issued
-in development was signed with it.
+   | Variable | Value |
+   |---|---|
+   | `DATABASE_URL` | the Neon string from step 1 |
+   | `SECRET_KEY` | your freshly generated key |
+   | `GROQ_API_KEY` | your Groq key |
+   | `LLM_PROVIDER` | `groq` |
+   | `GROQ_LLM_MODEL` | `openai/gpt-oss-120b` |
+   | `WHISPER_MODEL` | `whisper-large-v3-turbo` |
+   | `ALGORITHM` | `HS256` |
+   | `ACCESS_TOKEN_EXPIRE_MINUTES` | `1440` |
+   | `ENVIRONMENT` | `production` |
+   | `CORS_ORIGINS` | your Vercel URL — fill in after step 3 |
 
-`OPENAI_API_KEY` is not needed while `LLM_PROVIDER=groq`.
+   Generate the secret key yourself:
 
-4. Deploy, then check `https://YOUR-BACKEND.up.railway.app/health`.
-   It must report `"database": "connected"`.
+   ```bash
+   python3 -c "import secrets; print(secrets.token_urlsafe(48))"
+   ```
+
+   **Do not reuse the `SECRET_KEY` from `backend/.env`** — every token issued
+   in development was signed with it.
+
+   `OPENAI_API_KEY` is not needed while `LLM_PROVIDER=groq`.
+
+5. Deploy. The first build takes 3-5 minutes.
+6. Check `https://YOUR-SERVICE.onrender.com/health` — it must report
+   `"database": "connected"`.
 
 Tables are created automatically on first boot.
+
+### The free tier sleeps
+
+A free Render service **spins down after 15 minutes of inactivity**, and the
+next request takes **about 50 seconds** while it wakes. That is fine for a demo
+as long as you know: open `/health` a minute before you present, and it will be
+warm.
 
 ---
 
@@ -71,7 +101,7 @@ Then add **one** environment variable in the Vercel dashboard
 
 | Variable | Value |
 |---|---|
-| `VITE_API_URL` | `https://YOUR-BACKEND.up.railway.app` |
+| `VITE_API_URL` | `https://YOUR-SERVICE.onrender.com` |
 
 Redeploy after adding it — Vite inlines env vars at build time, so a variable
 added after the build has no effect until you rebuild:
@@ -84,14 +114,14 @@ vercel --prod --force
 
 ## 4. Close the loop
 
-Go back to Railway and set `CORS_ORIGINS` to your Vercel URL, with no trailing
+Go back to Render and set `CORS_ORIGINS` to your Vercel URL, with no trailing
 slash:
 
 ```
 CORS_ORIGINS=https://your-app.vercel.app
 ```
 
-Railway redeploys automatically. Without this, every browser request fails on a
+Render redeploys automatically. Without this, every browser request fails on a
 CORS preflight even though the API itself is healthy.
 
 ---
@@ -112,11 +142,11 @@ Replace `APP` with your Vercel URL.
 
 ### Things that behave differently in production
 
-- **HTTPS is required** for camera and microphone. Vercel and Railway both
+- **HTTPS is required** for camera and microphone. Vercel and Render both
   serve HTTPS, so this works — but it will not work over plain `http://`.
 - **WebSockets** must use `wss://`. The frontend derives this from
   `VITE_API_URL`, so an `https://` value is all that is needed.
-- **Free-tier cold starts.** The first request after an idle period can take
-  20-30 seconds while the backend wakes. Open `/health` once before a demo.
-- **Database volume.** Railway's free Postgres is small; it is fine for a
-  demo, not for a class of users uploading resumes.
+- **Free-tier cold starts.** Render sleeps the service after 15 minutes idle;
+  the next request takes ~50 seconds. Open `/health` before a demo.
+- **Database size.** Neon's free tier is 0.5 GB — ample for a demo, not for a
+  cohort uploading resumes.
