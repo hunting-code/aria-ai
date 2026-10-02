@@ -42,6 +42,14 @@ export default function useAIMeet(sessionId, { voiceId = 'nova', enabled = true 
   // does not claim she is "reviewing" before the interview has begun.
   const [hasSpoken, setHasSpoken] = useState(false)
   const [isFollowUp, setIsFollowUp] = useState(false)
+  // When the floor passed to the candidate, so the UI can time the "Done
+  // Answering" reveal and the silence nudge off one clock.
+  const [listeningSince, setListeningSince] = useState(null)
+  // What was actually transcribed from the last answer, shown back to the
+  // candidate so they can see their words were captured.
+  const [lastHeard, setLastHeard] = useState('')
+  // Question and answer per phase, for the phase-dot summaries.
+  const [turnHistory, setTurnHistory] = useState([])
   const [hasStarted, setHasStarted] = useState(false)
 
   const audio = useAudio()
@@ -54,6 +62,9 @@ export default function useAIMeet(sessionId, { voiceId = 'nova', enabled = true 
   const deliverRef = useRef(null)
   // Mirrors questionNumber for the socket handler, which must not re-subscribe.
   const questionNumberRef = useRef(0)
+  // Mirrors for the socket handler and sendAnswer, which must stay stable.
+  const phaseRef = useRef('warmup')
+  const currentQuestionRef = useRef('')
   // Streamed tokens accumulate here; the frame's own `text` wins when present.
   const bufferRef = useRef('')
   const answerStartedAt = useRef(null)
@@ -71,6 +82,7 @@ export default function useAIMeet(sessionId, { voiceId = 'nova', enabled = true 
   const deliverTurn = useCallback(
     async (text, isQuestion) => {
       if (!text) return
+      if (isQuestion) currentQuestionRef.current = text
       setHasSpoken(true)
       setIsProcessing(false)
       setIsAriaSpeaking(true)
@@ -87,7 +99,14 @@ export default function useAIMeet(sessionId, { voiceId = 'nova', enabled = true 
       // Only a question hands the floor over. A plain acknowledgement is
       // followed by another server turn, so the mic stays shut.
       if (isQuestion) {
+        // A beat between the question ending and the mic opening. Without it
+        // the recorder catches the tail of ARIA's own voice, and the candidate
+        // has no moment to think before they are live.
+        await new Promise((r) => window.setTimeout(r, 1000))
+        if (!liveRef.current) return
         answerStartedAt.current = Date.now()
+        setListeningSince(Date.now())
+        setLastHeard('')
         setIsListening(true)
         startRecording().catch(() => {
           setError('The microphone could not be started.')
@@ -100,6 +119,7 @@ export default function useAIMeet(sessionId, { voiceId = 'nova', enabled = true 
 
   deliverRef.current = deliverTurn
   questionNumberRef.current = questionNumber
+  phaseRef.current = phase
 
   // ---- Socket ------------------------------------------------------------ //
   useEffect(() => {
@@ -275,6 +295,13 @@ export default function useAIMeet(sessionId, { voiceId = 'nova', enabled = true 
       result?.durationSeconds ??
       (answerStartedAt.current ? (Date.now() - answerStartedAt.current) / 1000 : 0)
 
+    setLastHeard(text)
+    setListeningSince(null)
+    setTurnHistory((h) => [
+      ...h,
+      { phase: phaseRef.current, question: currentQuestionRef.current, answer: text },
+    ])
+
     const fillers = detectFillers(text, seconds)
     const ok = send({
       type: 'answer_transcript',
@@ -311,6 +338,7 @@ export default function useAIMeet(sessionId, { voiceId = 'nova', enabled = true 
   const skipQuestion = useCallback(() => {
     cancelSpeech()
     setIsListening(false)
+    setListeningSince(null)
     setError(null)
     setIsProcessing(true)
     // Discard whatever was captured: it is not being submitted.
@@ -369,6 +397,9 @@ export default function useAIMeet(sessionId, { voiceId = 'nova', enabled = true 
     isProcessing,
     hasSpoken,
     isFollowUp,
+    listeningSince,
+    lastHeard,
+    turnHistory,
     isTranscribing: audio.isTranscribing,
     liveTranscript: audio.transcript,
     getLevel: audio.getLevel,

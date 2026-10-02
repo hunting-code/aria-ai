@@ -3,7 +3,7 @@
 
 import { useEffect, useRef, useState } from 'react'
 import { useNavigate, useParams } from 'react-router-dom'
-import { AlertCircle, Loader2, Mic, PhoneOff, Video } from 'lucide-react'
+import { AlertCircle, Loader2, Mic, PhoneOff, Video, X } from 'lucide-react'
 
 import useAIMeet from '../hooks/useAIMeet'
 import useAuth from '../hooks/useAuth'
@@ -93,6 +93,11 @@ export default function AIMeet() {
 
   const [elapsed, setElapsed] = useState(0)
   const [fillerToast, setFillerToast] = useState(null)
+  // Seconds the candidate has had the floor. Drives the "Done Answering"
+  // reveal and the silence nudge, so both run off one clock.
+  const [listenSeconds, setListenSeconds] = useState(0)
+  // Which completed phase the candidate has opened for review, if any.
+  const [openPhase, setOpenPhase] = useState(null)
   const seenFillers = useRef(0)
 
   // Start the interview as soon as the socket is up.
@@ -105,6 +110,19 @@ export default function AIMeet() {
     const t = window.setInterval(() => setElapsed((s) => s + 1), 1000)
     return () => window.clearInterval(t)
   }, [])
+
+  // Time since the floor passed to the candidate.
+  useEffect(() => {
+    if (!meet.listeningSince) {
+      setListenSeconds(0)
+      return undefined
+    }
+    setListenSeconds(0)
+    const t = window.setInterval(() => {
+      setListenSeconds(Math.floor((Date.now() - meet.listeningSince) / 1000))
+    }, 500)
+    return () => window.clearInterval(t)
+  }, [meet.listeningSince])
 
   // Filler-word nudge: fires once per newly detected filler, clears after 2s.
   useEffect(() => {
@@ -193,12 +211,24 @@ export default function AIMeet() {
             const active = i === meet.phaseIndex
             return (
               <div key={p.id} className="flex items-center gap-2">
-                <div className="flex flex-col items-center gap-1">
+                <button
+                  type="button"
+                  disabled={!done}
+                  onClick={() => setOpenPhase(openPhase === p.id ? null : p.id)}
+                  aria-label={
+                    done ? `Review your ${p.name} answers` : `${p.name} phase`
+                  }
+                  className={cn(
+                    'flex flex-col items-center gap-1 rounded px-1 py-0.5',
+                    'focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-aria-pulse',
+                    done ? 'cursor-pointer hover:opacity-80' : 'cursor-default',
+                  )}
+                >
                   <span
                     className={cn(
                       'h-2.5 w-2.5 rounded-full transition-all duration-300',
                       done && 'bg-aria-green',
-                      active && 'scale-125 bg-aria-pulse shadow-glow-sm',
+                      active && 'scale-125 animate-pulse bg-aria-pulse shadow-glow-sm',
                       !done && !active && 'bg-aria-border',
                     )}
                     aria-current={active ? 'step' : undefined}
@@ -211,7 +241,7 @@ export default function AIMeet() {
                   >
                     {p.name}
                   </span>
-                </div>
+                </button>
                 {i < meet.phases.length - 1 ? (
                   <span
                     className={cn(
@@ -239,6 +269,47 @@ export default function AIMeet() {
           </Button>
         </div>
       </header>
+
+      {/* A completed phase, opened from its dot. */}
+      {openPhase ? (
+        <div
+          role="dialog"
+          aria-label="Phase summary"
+          className="absolute inset-x-0 top-14 z-50 mx-auto max-w-2xl animate-fade-in rounded-b-2xl border border-aria-border bg-aria-base p-5 shadow-surface"
+        >
+          <div className="mb-3 flex items-center justify-between gap-3">
+            <h3 className="font-display text-sm font-semibold">
+              {meet.phases.find((p) => p.id === openPhase)?.name} — your answers
+            </h3>
+            <button
+              type="button"
+              onClick={() => setOpenPhase(null)}
+              className="rounded p-1 text-aria-muted hover:text-aria-text focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-aria-pulse"
+              aria-label="Close summary"
+            >
+              <X className="h-4 w-4" aria-hidden="true" />
+            </button>
+          </div>
+          {meet.turnHistory.filter((t) => t.phase === openPhase).length ? (
+            <ul className="max-h-64 space-y-3 overflow-y-auto">
+              {meet.turnHistory
+                .filter((t) => t.phase === openPhase)
+                .map((t, i) => (
+                  <li key={i} className="border-l-2 border-aria-border pl-3">
+                    <p className="text-xs font-medium text-aria-muted">
+                      {t.question || 'Question'}
+                    </p>
+                    <p className="mt-1 text-sm text-aria-text">
+                      {t.answer || <span className="italic text-aria-muted">Skipped</span>}
+                    </p>
+                  </li>
+                ))}
+            </ul>
+          ) : (
+            <p className="text-sm text-aria-muted">No answers recorded in this phase.</p>
+          )}
+        </div>
+      ) : null}
 
       {/* ---- STAGE ---- */}
       <main className="flex min-h-0 flex-1 flex-col lg:flex-row">
@@ -276,6 +347,17 @@ export default function AIMeet() {
               </p>
             ) : null}
           </div>
+
+          {meet.lastHeard && !meet.isListening ? (
+            <div className="w-full max-w-2xl rounded-xl border border-aria-border bg-aria-surface/60 p-3">
+              <p className="font-mono text-[10px] uppercase tracking-wider text-aria-muted">
+                We heard
+              </p>
+              <p className="mt-1 text-sm leading-relaxed text-aria-text">
+                {meet.lastHeard}
+              </p>
+            </div>
+          ) : null}
 
           {meet.error ? (
             <div
@@ -383,12 +465,22 @@ export default function AIMeet() {
           </div>
         ) : meet.isListening ? (
           <div className="flex w-full max-w-2xl items-center justify-between gap-4">
-            <div className="flex items-center gap-3">
-              <span
-                aria-hidden="true"
-                className="h-3 w-3 animate-pulse rounded-full bg-aria-red"
-              />
-              <span className="text-sm font-medium text-aria-text">Speak now</span>
+            <div className="flex min-w-0 flex-col gap-0.5">
+              <span className="flex items-center gap-3">
+                <span
+                  aria-hidden="true"
+                  className="h-3 w-3 animate-pulse rounded-full bg-aria-red"
+                />
+                <span className="text-sm font-medium text-aria-text">
+                  Your turn — speak now
+                </span>
+              </span>
+              {/* A nudge, not an auto-submit: silence may just be thinking. */}
+              {listenSeconds >= 8 && !meet.liveTranscript ? (
+                <span className="text-xs text-aria-amber">
+                  Still there? Click Done Answering when ready.
+                </span>
+              ) : null}
             </div>
             <button
               type="button"
@@ -403,7 +495,12 @@ export default function AIMeet() {
               <Mic className="h-7 w-7" aria-hidden="true" />
             </button>
             <div className="flex flex-col items-end gap-1.5">
+              {/* Held back briefly so it is not fired before a word is said. */}
+            {listenSeconds >= 3 ? (
               <Button onClick={meet.sendAnswer}>Done Answering</Button>
+            ) : (
+              <Button disabled>Done Answering</Button>
+            )}
               <button
                 type="button"
                 onClick={meet.skipQuestion}
