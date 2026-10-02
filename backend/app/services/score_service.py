@@ -483,7 +483,11 @@ class ScoreService:
                 ],
                 response_format={"type": "json_object"},
                 temperature=0.4,
-                max_tokens=900,
+                # Reasoning models spend this budget before emitting content, so
+                # it has to cover the thinking as well as the JSON. At 900 the
+                # trailing fields (overall_verdict, resources) came back empty.
+                max_tokens=2000,
+                **llm_service._reasoning_kwargs(),
             )
             data = json.loads(response.choices[0].message.content or "{}")
         except PROVIDER_ERRORS:
@@ -503,10 +507,34 @@ class ScoreService:
             "strengths": string_list("strengths", 3),
             "weaknesses": string_list("weaknesses", 3),
             "top_suggestions": string_list("top_suggestions", 3),
-            "overall_verdict": str(data.get("overall_verdict") or "").strip(),
+            # Never blank: the analysis page renders this as the headline
+            # verdict, and an empty card reads as a broken page.
+            "overall_verdict": (
+                str(data.get("overall_verdict") or "").strip()
+                or self._derived_verdict(scores)
+            ),
             "recommended_resources": string_list("recommended_resources", 3),
             "source": "model",
         }
+
+    @staticmethod
+    def _derived_verdict(scores: dict) -> str:
+        """A plain verdict from the numbers, when the model did not write one."""
+        overall = scores.get("overall_score")
+        if overall is None:
+            return "This session has no scored answers yet."
+        if overall >= 80:
+            band = "a strong session - you answered with specifics and held your structure"
+        elif overall >= 65:
+            band = "a solid session, let down in places by answers that stayed general"
+        elif overall >= 50:
+            band = "a mixed session - the shape of your answers is there, the substance is not yet"
+        else:
+            band = "a difficult session; the fundamentals need rebuilding before delivery matters"
+        return (
+            f"Overall this was {band}. You scored {round(overall)} out of 100. "
+            "Work through the suggestions below, then run the same role again and compare."
+        )
 
     def _offline_final_feedback(
         self, scores: dict[str, Any], answers: list
