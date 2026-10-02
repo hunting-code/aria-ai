@@ -48,6 +48,25 @@ async def lifespan(app: FastAPI):
 
     try:
         init_db()
+        # create_all only ever adds TABLES - it silently skips one that already
+        # exists, so a model change shipped after the first deploy leaves the
+        # database behind and every read of that table starts failing. Running
+        # the column sync here means a deploy heals itself, with no manual step
+        # to forget. Additive only: nothing is dropped or retyped.
+        from app.core.schema_sync import sync_schema
+        from app.core.database import engine as _engine
+
+        result = sync_schema(_engine)
+        if result["created_tables"] or result["added_columns"]:
+            logger.info(
+                "Schema brought up to date: %s%s",
+                f"created {', '.join(result['created_tables'])}; "
+                if result["created_tables"]
+                else "",
+                f"added {', '.join(result['added_columns'])}"
+                if result["added_columns"]
+                else "",
+            )
     except SQLAlchemyError:
         # In production a database the app cannot reach is fatal - fail the
         # deploy rather than serve requests that will 500 one by one.
