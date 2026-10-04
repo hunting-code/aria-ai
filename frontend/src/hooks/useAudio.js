@@ -69,6 +69,11 @@ export default function useAudio({ onPartial, onFinal } = {}) {
   const [isTranscribing, setIsTranscribing] = useState(false)
   const [audioBlob, setAudioBlob] = useState(null)
   const [liveTranscript, setLiveTranscript] = useState('')
+  // Words the recogniser has not committed yet. Shown faded and italic.
+  const [interimTranscript, setInterimTranscript] = useState('')
+  // Whether live recognition actually produced anything this session, so the
+  // UI can say which path is in use instead of failing silently.
+  const [usingLiveSpeech, setUsingLiveSpeech] = useState(false)
   const [transcript, setTranscript] = useState('')
   const [durationSeconds, setDurationSeconds] = useState(0)
   const [error, setError] = useState(null)
@@ -246,6 +251,8 @@ export default function useAudio({ onPartial, onFinal } = {}) {
             }
           }
           usingSpeechRef.current = true
+          setUsingLiveSpeech(true)
+          setInterimTranscript(interim)
           setLiveTranscript(`${speechTextRef.current} ${interim}`.trim())
         }
         // A recognition failure is not fatal: the Whisper upload still runs on
@@ -290,6 +297,7 @@ export default function useAudio({ onPartial, onFinal } = {}) {
     setAudioBlob(null)
     setTranscript('')
     setLiveTranscript('')
+    setInterimTranscript('')
     setDurationSeconds(0)
 
     recorder.ondataavailable = (event) => {
@@ -390,6 +398,7 @@ export default function useAudio({ onPartial, onFinal } = {}) {
         /* already stopped */
       }
     }
+    setInterimTranscript('')
     const spokenLive = speechTextRef.current.trim()
 
     const mimeType = mimeRef.current || 'audio/webm'
@@ -466,6 +475,10 @@ export default function useAudio({ onPartial, onFinal } = {}) {
     transcript: transcript || liveTranscript,
     isTranscribing,
     liveTranscript,
+    // Confirmed text only - excludes whatever is still being recognised.
+    finalTranscript: transcript || speechTextRef.current,
+    interimTranscript,
+    usingLiveSpeech,
     fillerData,
     durationSeconds,
     error,

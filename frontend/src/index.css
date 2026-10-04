@@ -133,6 +133,12 @@
       inset 0 0 20px rgba(245, 166, 35, 0.05);
   }
 
+  /* Filler words called out in the live transcript. Amber rather than red:
+     a filler is a habit to notice, not an error to punish. */
+  .filler-word {
+    @apply rounded bg-aria-amber/25 px-0.5 text-aria-text;
+  }
+
   /* Gradient wordmark / headline text. */
   .text-gradient {
     @apply bg-aria-gradient bg-clip-text text-transparent;

@@ -287,7 +287,12 @@ export default function Interview() {
     [liveFillers.count, liveWpm, wordCount],
   )
 
-  const highlighted = useMemo(() => highlightFillers(currentText), [currentText])
+  // Only the confirmed text is marked up: highlighting a word that is still
+  // being recognised makes it flicker as the recogniser revises it.
+  const settledText = typedMode
+    ? typedAnswer
+    : (audio.finalTranscript || '')
+  const highlighted = useMemo(() => highlightFillers(settledText), [settledText])
 
   const canSubmit =
     phase === 'answering' &&
@@ -663,12 +668,25 @@ export default function Interview() {
                 className="max-h-40 overflow-y-auto text-sm leading-relaxed text-aria-text"
               >
                 {currentText ? (
-                  // highlightFillers escapes everything it does not mark up, so
-                  // model-produced text cannot inject markup here.
-                  <p dangerouslySetInnerHTML={{ __html: highlighted }} />
+                  <p>
+                    {/* Confirmed words, with fillers marked. highlightFillers
+                        escapes everything it does not mark up, so recognised
+                        speech cannot inject markup here. */}
+                    <span dangerouslySetInnerHTML={{ __html: highlighted }} />
+                    {/* Words still being recognised: faded and italic, so it is
+                        obvious they may still change. */}
+                    {audio.interimTranscript ? (
+                      <span className="italic text-aria-text/60">
+                        {' '}
+                        {audio.interimTranscript}
+                      </span>
+                    ) : null}
+                  </p>
                 ) : (
                   <p className="text-aria-muted">
-                    {audio.isRecording
+                    {audio.isRecording && !audio.liveSpeechSupported
+                      ? 'Listening… your words will appear once you stop (this browser has no live transcription).'
+                      : audio.isRecording
                       ? 'Listening…'
                       : audio.isTranscribing
                         ? 'Transcribing…'

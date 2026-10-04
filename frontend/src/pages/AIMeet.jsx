@@ -348,6 +348,38 @@ export default function AIMeet() {
             ) : null}
           </div>
 
+          {/* When live recognition is unavailable - Brave blocks it, Firefox has
+              none - the answer still works via upload, but only after you stop
+              speaking. Saying so turns "nothing is happening" into a known
+              trade-off. */}
+          {meet.isListening && !meet.liveSpeechSupported ? (
+            <p className="w-full max-w-2xl rounded-lg border border-aria-amber/40 bg-aria-amber/10 px-3 py-2 text-xs text-aria-amber">
+              Live transcription is not available in this browser, so your words
+              appear after you finish. Chrome or Edge shows them as you speak.
+            </p>
+          ) : null}
+
+          {/* Live transcript while the candidate speaks: confirmed words solid,
+              words still being recognised faded. Without this they cannot tell
+              whether anything is being picked up at all. */}
+          {meet.isListening ? (
+            <div className="min-h-[3.5rem] w-full max-w-2xl rounded-xl border border-aria-border bg-aria-surface/60 p-3">
+              {meet.liveTranscript || meet.interimTranscript ? (
+                <p className="text-sm leading-relaxed text-aria-text">
+                  {meet.finalTranscript}
+                  {meet.interimTranscript ? (
+                    <span className="italic text-aria-text/60">
+                      {' '}
+                      {meet.interimTranscript}
+                    </span>
+                  ) : null}
+                </p>
+              ) : (
+                <p className="text-sm text-aria-muted">Listening…</p>
+              )}
+            </div>
+          ) : null}
+
           {meet.lastHeard && !meet.isListening ? (
             <div className="w-full max-w-2xl rounded-xl border border-aria-border bg-aria-surface/60 p-3">
               <p className="font-mono text-[10px] uppercase tracking-wider text-aria-muted">

@@ -402,6 +402,12 @@ export default function useAIMeet(sessionId, { voiceId = 'nova', enabled = true 
     turnHistory,
     isTranscribing: audio.isTranscribing,
     liveTranscript: audio.transcript,
+    finalTranscript: audio.finalTranscript,
+    interimTranscript: audio.interimTranscript,
+    // False means live recognition is unavailable in this browser and the
+    // slower upload path is in use. Surfaced so a silent fallback is visible.
+    usingLiveSpeech: audio.usingLiveSpeech,
+    liveSpeechSupported: audio.liveSpeechSupported,
     getLevel: audio.getLevel,
     // control
     begin,
